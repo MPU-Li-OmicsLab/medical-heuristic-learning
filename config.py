@@ -21,6 +21,7 @@ class RunConfig:
     max_error_samples: int = 20
     max_error_details: int = 40
     degradation_threshold: int = 10
+    degradation_rate: float = 0.05
     degradation_max_examples: int = 30
     max_llm_attempts: int = 2
     task_description: str = ""

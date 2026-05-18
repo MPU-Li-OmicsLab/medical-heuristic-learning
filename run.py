@@ -707,6 +707,7 @@ def run_heuristic_learning(
             y_score_train = y_pred_train
         train_old = compute_metrics(y_true_train, y_pred_train, y_score=y_score_train)
         primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
+        allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
         samples = collect_errors(
             df=train_df,
             label_col=label_col,
@@ -717,7 +718,10 @@ def run_heuristic_learning(
         )
         error_report = format_error_report(samples, max_details=run_cfg.max_error_details)
 
-        degradation_warning = ""
+        degradation_warning = (
+            f"本轮约束：允许退化阈值={allowed_degradation}（min={run_cfg.degradation_threshold}, rate={run_cfg.degradation_rate}）；"
+            f"训练集当前指标={train_old}；首要优化指标={primary}。"
+        )
         current_code = code_all
 
         proposal: ParsedProposal | None = None
@@ -769,7 +773,7 @@ def run_heuristic_learning(
             y_pred_new = _predict_with_function(new_fn, train_df, label_col)
             degr = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred_new)
 
-            if len(degr.degraded_indices) > run_cfg.degradation_threshold:
+            if len(degr.degraded_indices) > allowed_degradation:
                 examples = collect_degradation_examples(
                     df=train_df,
                     label_col=label_col,
@@ -782,7 +786,7 @@ def run_heuristic_learning(
                 )
                 degradation_warning = (
                     format_degradation_warning(degr.degraded_indices)
-                    + f"\n允许退化阈值={run_cfg.degradation_threshold}\n"
+                    + f"\n允许退化阈值={allowed_degradation}\n"
                     + "退化样本示例（JSON）=\n"
                     + json.dumps(examples, ensure_ascii=False)
                 )
