@@ -265,7 +265,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
         raise RuntimeError("heuristic_system.py 中未找到 predict_v0")
 
     y_pred_test_v0 = _predict_with_function(fn_v0, test_df, run_cfg.label_col)
-    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0).values
+    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_pred_test_v0).values
     records.append(IterationRecord(version="v0", error_analysis="default_v0", metrics=metrics_v0))
     append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
     trajectory_lines.append("V0: 初始化默认规则。")
@@ -339,8 +339,8 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
                 y_pred_new=y_pred_new,
             )
             allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
-            train_old = compute_metrics(y_true_train, y_pred_old).values
-            train_new = compute_metrics(y_true_train, y_pred_new).values
+            train_old = compute_metrics(y_true_train, y_pred_old, y_score=y_pred_old).values
+            train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_pred_new).values
             primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
             old_primary = float(train_old.get(primary, float("nan")))
             new_primary = float(train_new.get(primary, float("nan")))
@@ -400,7 +400,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             accepted = True
 
             y_pred_test = _predict_with_function(current_fn, test_df, run_cfg.label_col)
-            m = compute_metrics(y_true_test, y_pred_test).values
+            m = compute_metrics(y_true_test, y_pred_test, y_score=y_pred_test).values
             records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
             append_text(evolution_results_path, f"{current_version}\t{m}\n")
 
@@ -435,25 +435,47 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
 
     write_json(iteration_log_path, iteration_log)
 
+    if not records:
+        raise RuntimeError("未生成任何版本记录。")
+
+    def _score_f1(rec: IterationRecord) -> float:
+        v = rec.metrics.get("F1", float("-inf"))
+        try:
+            return float(v)
+        except Exception:
+            return float("-inf")
+
+    best = max(records, key=_score_f1)
+    selected_version = best.version
+
     final_ns = _load_heuristic_module(heuristic_path)
-    final_fn = final_ns.get(f"predict_{current_version}")
-    if final_fn is None:
-        raise RuntimeError("最终版本函数缺失。")
+    selected_fn = final_ns.get(f"predict_{selected_version}")
+    if selected_fn is None:
+        raise RuntimeError(f"选择版本函数缺失：predict_{selected_version}")
 
     export_code = heuristic_path.read_text(encoding="utf-8")
-    write_text(final_model_path, export_code)
+    export_code = export_code.rstrip() + "\n\n" + f"SELECTED_VERSION = '{selected_version}'\n\n" + (
+        "def predict(features: dict) -> int:\n"
+        f"    return predict_{selected_version}(features)\n"
+    ) + "\n\n" + (
+        "if __name__ == '__main__':\n"
+        "    assert predict({}) in (0, 1)\n"
+    )
+    write_text(final_model_path, export_code + "\n")
 
-    if len(records) >= 1:
-        v0 = records[0]
-        v_last = records[-1]
-        write_text(final_comparison_path, f"V0={v0.metrics}\nFINAL({v_last.version})={v_last.metrics}\n")
+    v0 = records[0]
+    v_last = records[-1]
+    write_text(
+        final_comparison_path,
+        f"V0={v0.metrics}\nLAST({v_last.version})={v_last.metrics}\nSELECTED_BY_TEST_F1({selected_version})={best.metrics}\n",
+    )
 
 
 def main() -> None:
     cfg = RunConfig(
         data_csv_path=Path("/data/yk/HL/data/YHD_bicarbonate.csv"),
         label_col="hospital_expire_flag",
-        output_dir=Path("/data/yk/HL/out"),
+        output_dir=Path("/data/yk/HL/out2"),
         iterations=10,
         metric_priority=("F1", "ACC"),
         max_error_samples=200,
