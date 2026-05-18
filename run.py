@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -88,6 +89,248 @@ def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
     if failed:
         return False, "；".join(failed)
     return True, ""
+
+
+def _extract_function_source(code: str, fn_name: str) -> str | None:
+    try:
+        module = ast.parse(code)
+    except Exception:
+        return None
+    target: ast.FunctionDef | None = None
+    for node in module.body:
+        if isinstance(node, ast.FunctionDef) and node.name == fn_name:
+            target = node
+            break
+    if target is None or target.lineno is None or target.end_lineno is None:
+        return None
+    lines = code.splitlines()
+    return "\n".join(lines[target.lineno - 1 : target.end_lineno])
+
+
+def _build_score_function(fn_source: str, score_fn_name: str) -> Callable[[dict], float] | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None:
+        return None
+
+    fndef.name = score_fn_name
+
+    def _replace_return(node: ast.AST) -> ast.AST:
+        if isinstance(node, ast.Return):
+            return ast.copy_location(ast.Return(value=ast.Name(id="score", ctx=ast.Load())), node)
+        return node
+
+    new_body: list[ast.stmt] = []
+    for stmt in fndef.body:
+        if isinstance(stmt, ast.Return):
+            new_body.append(_replace_return(stmt))  # type: ignore[arg-type]
+        else:
+            new_body.append(stmt)
+    fndef.body = new_body
+
+    tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+    ast.fix_missing_locations(tmp_mod)
+    try:
+        code_out = ast.unparse(tmp_mod)
+    except Exception:
+        return None
+
+    ns: dict = {}
+    try:
+        exec(compile(code_out, "<score_fn>", "exec"), ns, ns)
+        fn = ns.get(score_fn_name)
+        if callable(fn):
+            return fn
+    except Exception:
+        return None
+    return None
+
+
+def _extract_threshold_from_source(fn_source: str) -> float | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None or not fndef.body:
+        return None
+    last = fndef.body[-1]
+    if not isinstance(last, ast.Return) or last.value is None:
+        return None
+    if isinstance(last.value, ast.IfExp) and isinstance(last.value.test, ast.Compare):
+        cmp = last.value.test
+        if (
+            isinstance(cmp.left, ast.Name)
+            and cmp.left.id == "score"
+            and len(cmp.ops) == 1
+            and isinstance(cmp.ops[0], ast.GtE)
+            and len(cmp.comparators) == 1
+            and isinstance(cmp.comparators[0], ast.Constant)
+            and isinstance(cmp.comparators[0].value, (int, float))
+        ):
+            return float(cmp.comparators[0].value)
+    return None
+
+
+def _patch_threshold_in_source(fn_source: str, new_threshold: float, new_name: str) -> str | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None:
+        return None
+    fndef.name = new_name
+    if not fndef.body:
+        return None
+    last = fndef.body[-1]
+    if not isinstance(last, ast.Return) or last.value is None:
+        return None
+    if isinstance(last.value, ast.IfExp) and isinstance(last.value.test, ast.Compare):
+        cmp = last.value.test
+        if (
+            isinstance(cmp.left, ast.Name)
+            and cmp.left.id == "score"
+            and len(cmp.ops) == 1
+            and isinstance(cmp.ops[0], ast.GtE)
+            and len(cmp.comparators) == 1
+            and isinstance(cmp.comparators[0], ast.Constant)
+            and isinstance(cmp.comparators[0].value, (int, float))
+        ):
+            cmp.comparators[0] = ast.Constant(value=float(new_threshold))
+        else:
+            return None
+    else:
+        return None
+
+    tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+    ast.fix_missing_locations(tmp_mod)
+    try:
+        return ast.unparse(tmp_mod)
+    except Exception:
+        return None
+
+
+def _find_best_threshold_for_f1(scores: np.ndarray, y_true: np.ndarray) -> tuple[float, float]:
+    scores = np.asarray(scores, dtype=float)
+    y_true = np.asarray(y_true, dtype=int)
+    uniq = np.unique(scores)
+    if uniq.size == 0:
+        return 0.0, -1.0
+
+    best_t = float(uniq[0])
+    best_f1 = -1.0
+    for t in uniq:
+        y_pred = (scores >= t).astype(int)
+        f1 = float(compute_metrics(y_true, y_pred, y_score=scores).values["F1"])
+        if f1 > best_f1 + 1e-12:
+            best_f1 = f1
+            best_t = float(t)
+    return best_t, best_f1
+
+
+def _insert_score_rule(fn_source: str, feature: str, delta: int) -> str | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None or not fndef.body:
+        return None
+
+    insert_at = len(fndef.body)
+    for idx in range(len(fndef.body) - 1, -1, -1):
+        if isinstance(fndef.body[idx], ast.Return):
+            insert_at = idx
+            break
+
+    snippet = f'if _get_int("{feature}") == 1:\n    score += {int(delta)}\n'
+    try:
+        stmts = ast.parse(snippet).body
+    except Exception:
+        return None
+
+    fndef.body[insert_at:insert_at] = stmts
+    tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+    ast.fix_missing_locations(tmp_mod)
+    try:
+        return ast.unparse(tmp_mod)
+    except Exception:
+        return None
+
+
+def _tweak_score_penalty(fn_source: str, from_value: int, to_value: int) -> str | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None:
+        return None
+
+    changed = 0
+    for node in ast.walk(fndef):
+        if (
+            isinstance(node, ast.AugAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "score"
+            and isinstance(node.op, ast.Sub)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, (int, float))
+            and float(node.value.value) == float(from_value)
+        ):
+            node.value = ast.Constant(value=int(to_value))
+            changed += 1
+    if changed == 0:
+        return None
+
+    tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+    ast.fix_missing_locations(tmp_mod)
+    try:
+        return ast.unparse(tmp_mod)
+    except Exception:
+        return None
+
+
+def _rename_first_function(fn_source: str, new_name: str) -> str | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            n.name = new_name
+            tmp_mod = ast.Module(body=[n], type_ignores=[])
+            ast.fix_missing_locations(tmp_mod)
+            try:
+                return ast.unparse(tmp_mod)
+            except Exception:
+                return None
+    return None
 
 
 def _default_rule_v0_code(feature_cols: list[str]) -> tuple[str, str]:
@@ -303,150 +546,250 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
         accepted = False
         attempt = 0
         last_proposal: ParsedProposal | None = None
-        while attempt < run_cfg.max_llm_attempts and not accepted:
-            attempt += 1
-            if client is None:
-                break
+        if client is not None:
+            while attempt < run_cfg.max_llm_attempts and not accepted:
+                attempt += 1
 
-            prompt = get_iteration_prompt(
-                current_code=current_code,
-                error_report=error_report,
-                trajectory="\n".join(trajectory_lines),
-                degradation_warning=degradation_warning,
-                metric_desc=metric_desc,
-                next_version=next_version,
-            )
-            resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-            try:
-                proposal = _parse_proposal(resp)
-                last_proposal = proposal
-            except Exception as e:
-                degradation_warning = f"JSON 解析失败：{e}"
-                continue
-
-            if proposal.version != next_version:
-                degradation_warning = f"version 不匹配：期望 {next_version}，实际 {proposal.version}"
-                continue
-
-            new_code = proposal.new_policy_code
-            validate_python_syntax(new_code)
-            fn_name = extract_function_name(new_code)
-            if fn_name != f"predict_{next_version}":
-                degradation_warning = f"函数名不匹配：期望 predict_{next_version}，实际 {fn_name}"
-                continue
-
-            tmp_ns: dict = {}
-            exec(compile(current_code + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
-            new_fn = tmp_ns.get(f"predict_{next_version}")
-            if new_fn is None:
-                degradation_warning = "新函数未定义成功。"
-                continue
-
-            y_pred_old = y_pred_train
-            y_pred_new = _predict_with_function(new_fn, train_df, run_cfg.label_col)
-            degr = detect_degradation(
-                y_true=y_true_train,
-                y_pred_old=y_pred_old,
-                y_pred_new=y_pred_new,
-            )
-            train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_pred_new).values
-            old_primary = float(train_old.get(primary, float("nan")))
-            new_primary = float(train_new.get(primary, float("nan")))
-
-            if np.isfinite(old_primary) and np.isfinite(new_primary) and new_primary + 1e-4 < old_primary:
-                degradation_warning = (
-                    f"训练集指标未提升：{primary} 从 {old_primary:.6f} 降至 {new_primary:.6f}。"
-                    "请尽量最小修改以提高该指标，同时避免引入退化。"
+                prompt = get_iteration_prompt(
+                    current_code=current_code,
+                    error_report=error_report,
+                    trajectory="\n".join(trajectory_lines),
+                    degradation_warning=degradation_warning,
+                    metric_desc=metric_desc,
+                    next_version=next_version,
                 )
-                continue
+                resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+                try:
+                    proposal = _parse_proposal(resp)
+                    last_proposal = proposal
+                except Exception as e:
+                    degradation_warning = f"JSON 解析失败：{e}"
+                    continue
 
-            old_spec = float(train_old.get("Specificity", float("nan")))
-            new_spec = float(train_new.get("Specificity", float("nan")))
-            if np.isfinite(old_spec) and np.isfinite(new_spec) and new_spec + 1e-6 < old_spec - run_cfg.max_specificity_drop:
-                degradation_warning = (
-                    f"训练集 Specificity 降幅过大：从 {old_spec:.6f} 降至 {new_spec:.6f}。"
-                    f"请减少假阳性（FP），并保持降幅不超过 {run_cfg.max_specificity_drop:.3f}。"
-                )
-                continue
+                if proposal.version != next_version:
+                    degradation_warning = f"version 不匹配：期望 {next_version}，实际 {proposal.version}"
+                    continue
 
-            old_acc = float(train_old.get("ACC", float("nan")))
-            new_acc = float(train_new.get("ACC", float("nan")))
-            if np.isfinite(old_acc) and np.isfinite(new_acc) and new_acc + 1e-6 < old_acc - run_cfg.max_acc_drop:
-                degradation_warning = (
-                    f"训练集 ACC 降幅过大：从 {old_acc:.6f} 降至 {new_acc:.6f}。"
-                    f"请减少整体误差，并保持降幅不超过 {run_cfg.max_acc_drop:.3f}。"
-                )
-                continue
+                new_code = proposal.new_policy_code
+                validate_python_syntax(new_code)
+                fn_name = extract_function_name(new_code)
+                if fn_name != f"predict_{next_version}":
+                    degradation_warning = f"函数名不匹配：期望 predict_{next_version}，实际 {fn_name}"
+                    continue
 
-            if len(degr.degraded_indices) > allowed_degradation:
-                examples = collect_degradation_examples(
-                    df=train_df,
-                    label_col=run_cfg.label_col,
-                    degraded_indices=degr.degraded_indices,
+                tmp_ns: dict = {}
+                exec(compile(current_code + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
+                new_fn = tmp_ns.get(f"predict_{next_version}")
+                if new_fn is None:
+                    degradation_warning = "新函数未定义成功。"
+                    continue
+
+                y_pred_old = y_pred_train
+                y_pred_new = _predict_with_function(new_fn, train_df, run_cfg.label_col)
+                degr = detect_degradation(
+                    y_true=y_true_train,
                     y_pred_old=y_pred_old,
                     y_pred_new=y_pred_new,
-                    feature_cols=report_features,
-                    max_samples=run_cfg.degradation_max_examples,
-                    random_seed=run_cfg.random_seed + 1000 + i + attempt,
                 )
-                degradation_warning = (
-                    format_degradation_warning(degr.degraded_indices)
-                    + f"\n允许退化阈值={allowed_degradation}\n"
-                    + f"训练集旧指标={train_old}\n训练集新指标={train_new}\n"
-                    + "退化样本示例（JSON）=\n"
-                    + json.dumps(examples, ensure_ascii=False)
+                train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_pred_new).values
+                old_primary = float(train_old.get(primary, float("nan")))
+                new_primary = float(train_new.get(primary, float("nan")))
+
+                if np.isfinite(old_primary) and np.isfinite(new_primary) and new_primary + 1e-4 < old_primary:
+                    degradation_warning = (
+                        f"训练集指标未提升：{primary} 从 {old_primary:.6f} 降至 {new_primary:.6f}。"
+                        "请尽量最小修改以提高该指标，同时避免引入退化。"
+                    )
+                    continue
+
+                old_spec = float(train_old.get("Specificity", float("nan")))
+                new_spec = float(train_new.get("Specificity", float("nan")))
+                if np.isfinite(old_spec) and np.isfinite(new_spec) and new_spec + 1e-6 < old_spec - run_cfg.max_specificity_drop:
+                    degradation_warning = (
+                        f"训练集 Specificity 降幅过大：从 {old_spec:.6f} 降至 {new_spec:.6f}。"
+                        f"请减少假阳性（FP），并保持降幅不超过 {run_cfg.max_specificity_drop:.3f}。"
+                    )
+                    continue
+
+                old_acc = float(train_old.get("ACC", float("nan")))
+                new_acc = float(train_new.get("ACC", float("nan")))
+                if np.isfinite(old_acc) and np.isfinite(new_acc) and new_acc + 1e-6 < old_acc - run_cfg.max_acc_drop:
+                    degradation_warning = (
+                        f"训练集 ACC 降幅过大：从 {old_acc:.6f} 降至 {new_acc:.6f}。"
+                        f"请减少整体误差，并保持降幅不超过 {run_cfg.max_acc_drop:.3f}。"
+                    )
+                    continue
+
+                if len(degr.degraded_indices) > allowed_degradation:
+                    examples = collect_degradation_examples(
+                        df=train_df,
+                        label_col=run_cfg.label_col,
+                        degraded_indices=degr.degraded_indices,
+                        y_pred_old=y_pred_old,
+                        y_pred_new=y_pred_new,
+                        feature_cols=report_features,
+                        max_samples=run_cfg.degradation_max_examples,
+                        random_seed=run_cfg.random_seed + 1000 + i + attempt,
+                    )
+                    degradation_warning = (
+                        format_degradation_warning(degr.degraded_indices)
+                        + f"\n允许退化阈值={allowed_degradation}\n"
+                        + f"训练集旧指标={train_old}\n训练集新指标={train_new}\n"
+                        + "退化样本示例（JSON）=\n"
+                        + json.dumps(examples, ensure_ascii=False)
+                    )
+                    continue
+
+                base_tests = tmp_ns.get("TESTS", [])
+                combined_tests: list[dict] = []
+                if isinstance(base_tests, list):
+                    combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
+                combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
+                ok, msg = _run_assert_tests(tmp_ns, combined_tests)
+                if not ok:
+                    degradation_warning = f"回归测试失败：{msg}"
+                    continue
+
+                _append_new_version(
+                    heuristic_path,
+                    version_code=new_code,
+                    error_analysis=proposal.error_analysis,
+                    new_tests=proposal.new_tests,
                 )
-                continue
 
-            base_tests = tmp_ns.get("TESTS", [])
-            combined_tests: list[dict] = []
-            if isinstance(base_tests, list):
-                combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
-            combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
-            ok, msg = _run_assert_tests(tmp_ns, combined_tests)
-            if not ok:
-                degradation_warning = f"回归测试失败：{msg}"
-                continue
+                ns = _load_heuristic_module(heuristic_path)
+                current_fn = ns.get(f"predict_{next_version}")
+                if current_fn is None:
+                    degradation_warning = "新版本写入后无法加载。"
+                    continue
 
-            _append_new_version(
-                heuristic_path,
-                version_code=new_code,
-                error_analysis=proposal.error_analysis,
-                new_tests=proposal.new_tests,
-            )
+                current_version = next_version
+                trajectory_lines.append(f"V{i}: {proposal.error_analysis}")
+                accepted = True
 
-            ns = _load_heuristic_module(heuristic_path)
-            current_fn = ns.get(f"predict_{next_version}")
-            if current_fn is None:
-                degradation_warning = "新版本写入后无法加载。"
-                continue
+                y_pred_test = _predict_with_function(current_fn, test_df, run_cfg.label_col)
+                m = compute_metrics(y_true_test, y_pred_test, y_score=y_pred_test).values
+                records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
+                append_text(evolution_results_path, f"{current_version}\t{m}\n")
 
-            current_version = next_version
-            trajectory_lines.append(f"V{i}: {proposal.error_analysis}")
-            accepted = True
-
-            y_pred_test = _predict_with_function(current_fn, test_df, run_cfg.label_col)
-            m = compute_metrics(y_true_test, y_pred_test, y_score=y_pred_test).values
-            records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
-            append_text(evolution_results_path, f"{current_version}\t{m}\n")
-
-            iteration_log.append(
-                {
-                    "version": current_version,
-                    "attempt": attempt,
-                    "error_report": error_report,
-                    "degradation_warning": degradation_warning,
-                    "proposal": asdict(proposal),
-                    "train_metrics_old": train_old,
-                    "train_metrics_new": train_new,
-                    "test_metrics": m,
-                }
-            )
-
-        if client is None:
-            break
+                iteration_log.append(
+                    {
+                        "version": current_version,
+                        "attempt": attempt,
+                        "error_report": error_report,
+                        "degradation_warning": degradation_warning,
+                        "proposal": asdict(proposal),
+                        "train_metrics_old": train_old,
+                        "train_metrics_new": train_new,
+                        "test_metrics": m,
+                    }
+                )
 
         if not accepted:
+            current_fn_name = f"predict_{current_version}"
+            current_fn_source = _extract_function_source(current_code, current_fn_name)
+            if current_fn_source is not None:
+                candidates: list[tuple[str, str]] = []
+                for feat in ["Kidney_failure", "ARDS", "Hepatic_failure", "Cirrhosis", "Malignancy", "Solidtumors"]:
+                    if feat in feature_cols:
+                        c = _insert_score_rule(current_fn_source, feature=feat, delta=1)
+                        if c is not None:
+                            candidates.append((f"add_{feat}", c))
+                c_penalty = _tweak_score_penalty(current_fn_source, from_value=2, to_value=1)
+                if c_penalty is not None:
+                    candidates.append(("weaken_penalty_-2_to_-1", c_penalty))
+
+                best_choice: tuple[str, str] | None = None
+                best_train: dict[str, float] | None = None
+                best_degr: int | None = None
+
+                for tag, cand_src in candidates:
+                    renamed = _rename_first_function(cand_src, new_name=f"predict_{next_version}")
+                    if renamed is None:
+                        continue
+                    tmp_ns: dict = {}
+                    try:
+                        exec(compile(current_code + "\n\n" + renamed, "<heuristic>", "exec"), tmp_ns, tmp_ns)
+                    except Exception:
+                        continue
+                    cand_fn = tmp_ns.get(f"predict_{next_version}")
+                    if not callable(cand_fn):
+                        continue
+
+                    y_pred_new = _predict_with_function(cand_fn, train_df, run_cfg.label_col)
+                    degr = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_train, y_pred_new=y_pred_new).degraded_indices
+                    if len(degr) > allowed_degradation:
+                        continue
+
+                    train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_pred_new).values
+                    old_f1 = float(train_old.get("F1", float("nan")))
+                    new_f1 = float(train_new.get("F1", float("nan")))
+                    if not (np.isfinite(old_f1) and np.isfinite(new_f1) and new_f1 > old_f1 + 1e-4):
+                        continue
+
+                    old_spec = float(train_old.get("Specificity", float("nan")))
+                    new_spec = float(train_new.get("Specificity", float("nan")))
+                    if np.isfinite(old_spec) and np.isfinite(new_spec) and new_spec + 1e-6 < old_spec - run_cfg.max_specificity_drop:
+                        continue
+
+                    old_acc = float(train_old.get("ACC", float("nan")))
+                    new_acc = float(train_new.get("ACC", float("nan")))
+                    if np.isfinite(old_acc) and np.isfinite(new_acc) and new_acc + 1e-6 < old_acc - run_cfg.max_acc_drop:
+                        continue
+
+                    if best_train is None:
+                        best_choice = (tag, renamed)
+                        best_train = train_new
+                        best_degr = len(degr)
+                        continue
+
+                    best_primary = float(best_train.get(primary, float("-inf")))
+                    cand_primary = float(train_new.get(primary, float("-inf")))
+                    if cand_primary > best_primary + 1e-6:
+                        best_choice = (tag, renamed)
+                        best_train = train_new
+                        best_degr = len(degr)
+                        continue
+                    if abs(cand_primary - best_primary) <= 1e-6:
+                        if len(degr) < int(best_degr or 0):
+                            best_choice = (tag, renamed)
+                            best_train = train_new
+                            best_degr = len(degr)
+
+                if best_choice is not None and best_train is not None:
+                    tag, chosen_src = best_choice
+                    _append_new_version(
+                        heuristic_path,
+                        version_code=chosen_src,
+                        error_analysis=f"自动候选改动：{tag}",
+                        new_tests=[{"name": "predict_returns_int", "code": f"assert predict_{next_version}({{}}) in (0, 1)"}],
+                    )
+                    ns = _load_heuristic_module(heuristic_path)
+                    current_fn = ns.get(f"predict_{next_version}")
+                    if current_fn is not None:
+                        current_version = next_version
+                        trajectory_lines.append(f"V{i}: 自动候选改动 {tag}")
+                        y_pred_test = _predict_with_function(current_fn, test_df, run_cfg.label_col)
+                        m = compute_metrics(y_true_test, y_pred_test, y_score=y_pred_test).values
+                        records.append(IterationRecord(version=current_version, error_analysis=f"auto_patch:{tag}", metrics=m))
+                        append_text(evolution_results_path, f"{current_version}\t{m}\n")
+                        iteration_log.append(
+                            {
+                                "version": current_version,
+                                "attempt": attempt,
+                                "error_report": error_report,
+                                "degradation_warning": f"auto_patch:{tag}",
+                                "proposal": asdict(last_proposal) if last_proposal is not None else None,
+                                "train_metrics_old": train_old,
+                                "train_metrics_new": best_train,
+                                "test_metrics": m,
+                            }
+                        )
+                        accepted = True
+
+            if accepted:
+                continue
+
             iteration_log.append(
                 {
                     "version": next_version,
