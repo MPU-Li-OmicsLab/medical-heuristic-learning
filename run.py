@@ -104,6 +104,68 @@ def _sanity_check_not_collapsed(y_pred: np.ndarray) -> tuple[bool, str]:
     return True, ""
 
 
+def _extract_base_calibration_sub(fn_source: str) -> float | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None:
+        return None
+
+    saw_score_init = False
+    for stmt in fndef.body[:10]:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            if stmt.targets[0].id == "score" and isinstance(stmt.value, ast.Constant) and stmt.value.value == 0.5:
+                saw_score_init = True
+                continue
+        if saw_score_init and isinstance(stmt, ast.AugAssign):
+            if (
+                isinstance(stmt.target, ast.Name)
+                and stmt.target.id == "score"
+                and isinstance(stmt.op, ast.Sub)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, (int, float))
+            ):
+                return float(stmt.value.value)
+    return None
+
+
+def _patch_base_calibration_sub(fn_source: str, new_sub: float) -> str | None:
+    try:
+        mod = ast.parse(fn_source)
+    except Exception:
+        return None
+    fndef: ast.FunctionDef | None = None
+    for n in mod.body:
+        if isinstance(n, ast.FunctionDef):
+            fndef = n
+            break
+    if fndef is None:
+        return None
+
+    saw_score_init = False
+    for stmt in fndef.body[:10]:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            if stmt.targets[0].id == "score" and isinstance(stmt.value, ast.Constant) and stmt.value.value == 0.5:
+                saw_score_init = True
+                continue
+        if saw_score_init and isinstance(stmt, ast.AugAssign):
+            if isinstance(stmt.target, ast.Name) and stmt.target.id == "score" and isinstance(stmt.op, ast.Sub):
+                stmt.value = ast.Constant(value=float(new_sub))
+                tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+                ast.fix_missing_locations(tmp_mod)
+                try:
+                    return ast.unparse(tmp_mod)
+                except Exception:
+                    return None
+    return None
+
+
 def _extract_function_source(code: str, fn_name: str) -> str | None:
     try:
         module = ast.parse(code)
@@ -812,11 +874,71 @@ def run_heuristic_learning(
             new_err = int(np.sum(y_pred_new != y_true_train))
             if np.isfinite(old_primary) and np.isfinite(new_primary):
                 if not (new_primary > old_primary + 1e-4 or (new_primary >= old_primary - 1e-6 and new_err < old_err)):
-                    degradation_warning = (
-                        f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
-                        f"errors {old_err}->{new_err}。请最小修改并改进。"
+                    fn_src = _extract_function_source(new_code, f"predict_{next_version}")
+                    base_sub = _extract_base_calibration_sub(fn_src) if fn_src is not None else None
+                    improved_code: str | None = None
+                    improved_train: dict[str, float] | None = None
+                    improved_err: int | None = None
+                    improved_sub: float | None = None
+
+                    if base_sub is not None:
+                        search = [round(x, 2) for x in np.arange(max(0.0, base_sub - 0.2), min(0.6, base_sub + 0.21), 0.05)]
+                        best_key: tuple[float, int] | None = None
+                        for sub in search:
+                            patched_fn_src = _patch_base_calibration_sub(fn_src, new_sub=sub)
+                            if patched_fn_src is None:
+                                continue
+                            patched_code = patched_fn_src
+                            tmp_ns2: dict = {}
+                            try:
+                                exec(compile(current_code + "\n\n" + patched_code, "<heuristic>", "exec"), tmp_ns2, tmp_ns2)
+                            except Exception:
+                                continue
+                            fn2 = tmp_ns2.get(f"predict_{next_version}")
+                            if not callable(fn2):
+                                continue
+                            y_pred2 = _predict_with_function(fn2, train_df, label_col)
+                            degr2 = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred2)
+                            if len(degr2.degraded_indices) > allowed_degradation:
+                                continue
+                            y_score2 = _predict_scores_from_code(current_code + "\n\n" + patched_code, f"predict_{next_version}", train_df, label_col)
+                            if y_score2 is None:
+                                y_score2 = y_pred2
+                            train2 = compute_metrics(y_true_train, y_pred2, y_score=y_score2)
+                            p2 = float(train2.get(primary, float("nan")))
+                            e2 = int(np.sum(y_pred2 != y_true_train))
+
+                            if np.isfinite(old_primary) and np.isfinite(p2):
+                                ok_improve = p2 > old_primary + 1e-4 or (p2 >= old_primary - 1e-6 and e2 < old_err)
+                                if not ok_improve:
+                                    continue
+
+                            key = (p2, -e2)
+                            if best_key is None or key > best_key:
+                                best_key = key
+                                improved_code = patched_code
+                                improved_train = train2
+                                improved_err = e2
+                                improved_sub = sub
+
+                    if improved_code is None:
+                        degradation_warning = (
+                            f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
+                            f"errors {old_err}->{new_err}。请最小修改并改进。"
+                        )
+                        continue
+
+                    new_code = improved_code
+                    train_new = improved_train or train_new
+                    new_primary = float(train_new.get(primary, float("nan")))
+                    new_err = int(improved_err if improved_err is not None else new_err)
+                    proposal = ParsedProposal(
+                        version=proposal.version,
+                        error_analysis=(proposal.error_analysis + f"（自动校准：score -= {base_sub:.2f} -> {improved_sub:.2f}）"),
+                        new_policy_code=new_code,
+                        new_tests=proposal.new_tests,
+                        modified_tests=proposal.modified_tests,
                     )
-                    continue
 
             _append_new_version(
                 heuristic_path,
