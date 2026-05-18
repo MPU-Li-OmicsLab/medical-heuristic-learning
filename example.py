@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pandas as pd
 from pathlib import Path
 
@@ -14,7 +15,8 @@ def main() -> None:
     train_df = data.iloc[:500].copy()
     test_df = data.iloc[500:].copy()
 
-    run_cfg = RunConfig(output_dir=Path("/data/yk/HL/out_example"))
+    output_dir = Path(os.getenv("HL_OUTPUT_DIR", "/data/yk/HL/out_example"))
+    run_cfg = RunConfig(output_dir=output_dir)
     llm_cfg = LLMConfig()
     run_heuristic_learning(train_df=train_df, test_df=test_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
 
