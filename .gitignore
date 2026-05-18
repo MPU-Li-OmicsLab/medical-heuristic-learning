@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+iteration_log.json
+evolution_results.txt
+final_comparison.txt
+final_heuristic_model.py
+heuristic_system.py
+probe_univariate_results.csv
+probe_knowledge.md
