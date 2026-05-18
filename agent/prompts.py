@@ -62,15 +62,15 @@ def get_iteration_prompt(
         f"{trajectory}\n\n"
         "[退化警告]\n"
         f"{degradation_warning}\n\n"
+        "重要：当存在退化警告时，你必须优先修复退化样本（旧版正确/新版错误），并尽量不引入新的退化。\n"
         "你必须返回严格 JSON：\n"
         "{\n"
         f'  "version": "{next_version}",\n'
         '  "error_analysis": "...(中文)...",\n'
         '  "new_policy_code": "def predict_...\\n ...",\n'
         '  "new_tests": [{"name": "...", "code": "assert ..."}],\n'
-        '  "modified_tests": [{"name": "...", "old_code": "assert ...", "new_code": "assert ..."}]\n'
+        '  "modified_tests": []\n'
         "}\n"
         "修改必须最小化，且保持注释清晰。\n"
         "规则必须自包含，只能使用 Python 标准库，不得依赖第三方包。\n"
     )
-

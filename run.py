@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 from agent.client import ChatMessage, LLMClient
 from agent.prompts import get_iteration_prompt, get_rule_generation_prompt
 from config import LLMConfig, RunConfig
-from evolution.degradation import detect_degradation, format_degradation_warning
+from evolution.degradation import collect_degradation_examples, detect_degradation, format_degradation_warning
 from evolution.error_analysis import collect_errors, format_error_report
 from evolution.rule_utils import ParsedProposal, extract_function_name, strip_code_fences, validate_python_syntax
 from metrics import compute_metrics, generate_metric_description
@@ -40,6 +40,54 @@ def _predict_with_function(fn: Callable[[dict], int], df: pd.DataFrame, label_co
             p = 0
         preds.append(1 if p == 1 else 0)
     return np.asarray(preds, dtype=int)
+
+
+def _pick_report_features(feature_cols: list[str], top_features: list[str]) -> list[str]:
+    preferred = [
+        "Respiratory_failure",
+        "SOFA",
+        "resp_rate",
+        "sepsis",
+        "Kidney_failure",
+        "Urea_Nitrogen",
+        "heart_rate",
+        "age",
+        "inr",
+        "temperature",
+        "ICH",
+        "Chloride",
+        "bicarbonate",
+        "Cerebral_infarction",
+        "ARDS",
+        "wbc",
+        "mbp",
+        "Sodium",
+        "hemoglobin",
+        "platelet",
+    ]
+    selected: list[str] = []
+    for f in list(dict.fromkeys(top_features + preferred)):
+        if f in feature_cols:
+            selected.append(f)
+    return selected
+
+
+def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
+    failed: list[str] = []
+    for t in tests:
+        name = str(t.get("name", ""))
+        code = str(t.get("code", ""))
+        if not code.strip():
+            continue
+        try:
+            exec(code, ns, ns)
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+            if len(failed) >= 10:
+                break
+    if failed:
+        return False, "；".join(failed)
+    return True, ""
 
 
 def _default_rule_v0_code(feature_cols: list[str]) -> tuple[str, str]:
@@ -162,6 +210,8 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
     test_df = test_df.reset_index(drop=True)
 
     feature_cols = [c for c in df.columns if c != run_cfg.label_col]
+    y_true_train = train_df[run_cfg.label_col].astype(int).to_numpy()
+    y_true_test = test_df[run_cfg.label_col].astype(int).to_numpy()
 
     univariate_df = run_univariate_probe(train_df=train_df, label_col=run_cfg.label_col)
     univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
@@ -169,6 +219,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
 
     topk = min(run_cfg.univariate_top_k, len(univariate_df))
     top_features = univariate_df.head(topk)["feature"].tolist()
+    report_features = _pick_report_features(feature_cols=feature_cols, top_features=top_features)
     univariate_summary = univariate_df.head(topk)[
         ["rank", "feature", "feature_type", "method", "p_value", "missing_rate", "pointbiserial_r", "mwu_p", "binned_or_q4_rel_to_q1"]
     ].to_string(index=False)
@@ -214,7 +265,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
         raise RuntimeError("heuristic_system.py 中未找到 predict_v0")
 
     y_pred_test_v0 = _predict_with_function(fn_v0, test_df, run_cfg.label_col)
-    metrics_v0 = compute_metrics(test_df[run_cfg.label_col].astype(int).to_numpy(), y_pred_test_v0).values
+    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0).values
     records.append(IterationRecord(version="v0", error_analysis="default_v0", metrics=metrics_v0))
     append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
     trajectory_lines.append("V0: 初始化默认规则。")
@@ -231,6 +282,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             y_pred=y_pred_train,
             max_error_samples=run_cfg.max_error_samples,
             random_seed=run_cfg.random_seed + i,
+            feature_cols=report_features,
         )
         error_report = format_error_report(samples)
 
@@ -282,12 +334,52 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             y_pred_old = y_pred_train
             y_pred_new = _predict_with_function(new_fn, train_df, run_cfg.label_col)
             degr = detect_degradation(
-                y_true=train_df[run_cfg.label_col].astype(int).to_numpy(),
+                y_true=y_true_train,
                 y_pred_old=y_pred_old,
                 y_pred_new=y_pred_new,
             )
-            if len(degr.degraded_indices) > run_cfg.degradation_threshold:
-                degradation_warning = format_degradation_warning(degr.degraded_indices)
+            allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
+            train_old = compute_metrics(y_true_train, y_pred_old).values
+            train_new = compute_metrics(y_true_train, y_pred_new).values
+            primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
+            old_primary = float(train_old.get(primary, float("nan")))
+            new_primary = float(train_new.get(primary, float("nan")))
+
+            if np.isfinite(old_primary) and np.isfinite(new_primary) and new_primary + 1e-4 < old_primary:
+                degradation_warning = (
+                    f"训练集指标未提升：{primary} 从 {old_primary:.6f} 降至 {new_primary:.6f}。"
+                    "请尽量最小修改以提高该指标，同时避免引入退化。"
+                )
+                continue
+
+            if len(degr.degraded_indices) > allowed_degradation:
+                examples = collect_degradation_examples(
+                    df=train_df,
+                    label_col=run_cfg.label_col,
+                    degraded_indices=degr.degraded_indices,
+                    y_pred_old=y_pred_old,
+                    y_pred_new=y_pred_new,
+                    feature_cols=report_features,
+                    max_samples=run_cfg.degradation_max_examples,
+                    random_seed=run_cfg.random_seed + 1000 + i + attempt,
+                )
+                degradation_warning = (
+                    format_degradation_warning(degr.degraded_indices)
+                    + f"\n允许退化阈值={allowed_degradation}\n"
+                    + f"训练集旧指标={train_old}\n训练集新指标={train_new}\n"
+                    + "退化样本示例（JSON）=\n"
+                    + json.dumps(examples, ensure_ascii=False)
+                )
+                continue
+
+            base_tests = tmp_ns.get("TESTS", [])
+            combined_tests: list[dict] = []
+            if isinstance(base_tests, list):
+                combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
+            combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
+            ok, msg = _run_assert_tests(tmp_ns, combined_tests)
+            if not ok:
+                degradation_warning = f"回归测试失败：{msg}"
                 continue
 
             _append_new_version(
@@ -308,7 +400,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             accepted = True
 
             y_pred_test = _predict_with_function(current_fn, test_df, run_cfg.label_col)
-            m = compute_metrics(test_df[run_cfg.label_col].astype(int).to_numpy(), y_pred_test).values
+            m = compute_metrics(y_true_test, y_pred_test).values
             records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
             append_text(evolution_results_path, f"{current_version}\t{m}\n")
 
@@ -319,6 +411,8 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
                     "error_report": error_report,
                     "degradation_warning": degradation_warning,
                     "proposal": asdict(proposal),
+                    "train_metrics_old": train_old,
+                    "train_metrics_new": train_new,
                     "test_metrics": m,
                 }
             )
@@ -372,4 +466,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

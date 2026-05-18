@@ -21,6 +21,7 @@ def collect_errors(
     y_pred: np.ndarray,
     max_error_samples: int,
     random_seed: int,
+    feature_cols: list[str] | None = None,
 ) -> list[ErrorSample]:
     y_true = df[label_col].astype(int).to_numpy()
     wrong = np.where(y_true != y_pred)[0]
@@ -45,7 +46,8 @@ def collect_errors(
         keep.extend(list(rng.choice(fn, size=n_fn, replace=False)) if n_fn > 0 else [])
 
     samples: list[ErrorSample] = []
-    feature_cols = [c for c in df.columns if c != label_col]
+    if feature_cols is None:
+        feature_cols = [c for c in df.columns if c != label_col]
     for i in keep:
         row = df.iloc[int(i)]
         features = {c: row[c] for c in feature_cols}
@@ -64,4 +66,3 @@ def format_error_report(samples: list[ErrorSample]) -> str:
         lines.append(f"- idx={s.idx} kind={s.kind} y_true={s.y_true} y_pred={s.y_pred}")
         lines.append(f"  features={s.features}")
     return "\n".join(lines)
-
