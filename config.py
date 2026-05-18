@@ -20,9 +20,13 @@ class RunConfig:
     iterations: int = 10
     metric_priority: tuple[str, ...] = ("F1", "ACC")
     max_error_samples: int = 200
+    max_error_details: int = 40
     degradation_threshold: int = 10
     degradation_rate: float = 0.05
     degradation_max_examples: int = 30
+    max_llm_attempts: int = 6
+    max_specificity_drop: float = 0.03
+    max_acc_drop: float = 0.02
     univariate_top_k: int = 30
     knowledge_top_k: int = 20
     test_size: float = 0.2

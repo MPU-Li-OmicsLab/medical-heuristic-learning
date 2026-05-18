@@ -276,6 +276,9 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
     for i in range(1, run_cfg.iterations + 1):
         next_version = f"v{i}"
         y_pred_train = _predict_with_function(current_fn, train_df, run_cfg.label_col)
+        allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
+        train_old = compute_metrics(y_true_train, y_pred_train, y_score=y_pred_train).values
+        primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
         samples = collect_errors(
             df=train_df,
             label_col=run_cfg.label_col,
@@ -284,16 +287,23 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             random_seed=run_cfg.random_seed + i,
             feature_cols=report_features,
         )
-        error_report = format_error_report(samples)
+        error_report = format_error_report(samples, max_details=run_cfg.max_error_details)
 
-        degradation_warning = "无退化检测（尚未提案）。"
+        degradation_warning = (
+            f"本轮约束：允许退化阈值={allowed_degradation}；"
+            f"训练集当前指标={train_old}；"
+            f"本轮优化优先级首要指标={primary}；"
+            f"请避免 Specificity 下降超过 {run_cfg.max_specificity_drop:.3f}，"
+            f"避免 ACC 下降超过 {run_cfg.max_acc_drop:.3f}。"
+        )
 
         current_code = heuristic_path.read_text(encoding="utf-8")
 
         proposal: ParsedProposal | None = None
         accepted = False
         attempt = 0
-        while attempt < 2 and not accepted:
+        last_proposal: ParsedProposal | None = None
+        while attempt < run_cfg.max_llm_attempts and not accepted:
             attempt += 1
             if client is None:
                 break
@@ -309,6 +319,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
             resp = client.chat_json([ChatMessage(role="user", content=prompt)])
             try:
                 proposal = _parse_proposal(resp)
+                last_proposal = proposal
             except Exception as e:
                 degradation_warning = f"JSON 解析失败：{e}"
                 continue
@@ -338,10 +349,7 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
                 y_pred_old=y_pred_old,
                 y_pred_new=y_pred_new,
             )
-            allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
-            train_old = compute_metrics(y_true_train, y_pred_old, y_score=y_pred_old).values
             train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_pred_new).values
-            primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
             old_primary = float(train_old.get(primary, float("nan")))
             new_primary = float(train_new.get(primary, float("nan")))
 
@@ -349,6 +357,24 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
                 degradation_warning = (
                     f"训练集指标未提升：{primary} 从 {old_primary:.6f} 降至 {new_primary:.6f}。"
                     "请尽量最小修改以提高该指标，同时避免引入退化。"
+                )
+                continue
+
+            old_spec = float(train_old.get("Specificity", float("nan")))
+            new_spec = float(train_new.get("Specificity", float("nan")))
+            if np.isfinite(old_spec) and np.isfinite(new_spec) and new_spec + 1e-6 < old_spec - run_cfg.max_specificity_drop:
+                degradation_warning = (
+                    f"训练集 Specificity 降幅过大：从 {old_spec:.6f} 降至 {new_spec:.6f}。"
+                    f"请减少假阳性（FP），并保持降幅不超过 {run_cfg.max_specificity_drop:.3f}。"
+                )
+                continue
+
+            old_acc = float(train_old.get("ACC", float("nan")))
+            new_acc = float(train_new.get("ACC", float("nan")))
+            if np.isfinite(old_acc) and np.isfinite(new_acc) and new_acc + 1e-6 < old_acc - run_cfg.max_acc_drop:
+                degradation_warning = (
+                    f"训练集 ACC 降幅过大：从 {old_acc:.6f} 降至 {new_acc:.6f}。"
+                    f"请减少整体误差，并保持降幅不超过 {run_cfg.max_acc_drop:.3f}。"
                 )
                 continue
 
@@ -427,7 +453,8 @@ def run_heuristic_learning(run_cfg: RunConfig, llm_cfg: LLMConfig) -> None:
                     "attempt": attempt,
                     "error_report": error_report,
                     "degradation_warning": degradation_warning,
-                    "proposal": None,
+                    "proposal": asdict(last_proposal) if last_proposal is not None else None,
+                    "train_metrics_old": train_old,
                     "test_metrics": None,
                 }
             )

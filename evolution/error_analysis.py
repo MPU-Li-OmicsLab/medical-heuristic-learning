@@ -56,13 +56,17 @@ def collect_errors(
     return samples
 
 
-def format_error_report(samples: list[ErrorSample]) -> str:
+def format_error_report(samples: list[ErrorSample], max_details: int = 40) -> str:
     if not samples:
         return "无错误样本。"
     fp = sum(1 for s in samples if s.kind == "FP")
     fn = sum(1 for s in samples if s.kind == "FN")
     lines = [f"错误样本数={len(samples)} (FP={fp}, FN={fn})", ""]
-    for s in samples:
+    shown = samples[: max(0, max_details)]
+    for s in shown:
         lines.append(f"- idx={s.idx} kind={s.kind} y_true={s.y_true} y_pred={s.y_pred}")
         lines.append(f"  features={s.features}")
+    if len(shown) < len(samples):
+        lines.append("")
+        lines.append(f"（仅展示前 {len(shown)} 条错误样本详情，其余已省略）")
     return "\n".join(lines)
