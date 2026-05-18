@@ -91,6 +91,19 @@ def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
     return True, ""
 
 
+def _sanity_check_not_collapsed(y_pred: np.ndarray) -> tuple[bool, str]:
+    y_pred = np.asarray(y_pred).astype(int)
+    uniq = np.unique(y_pred)
+    if uniq.size == 0:
+        return False, "sanity: empty predictions"
+    if uniq.size == 1:
+        return False, f"sanity: collapsed to constant prediction {int(uniq[0])}"
+    pos_rate = float((y_pred == 1).mean())
+    if pos_rate <= 0.01 or pos_rate >= 0.99:
+        return False, f"sanity: extreme positive rate {pos_rate:.3f}"
+    return True, ""
+
+
 def _extract_function_source(code: str, fn_name: str) -> str | None:
     try:
         module = ast.parse(code)
@@ -607,36 +620,61 @@ def run_heuristic_learning(
                 metric_desc=metric_desc,
                 task_description=run_cfg.task_description,
             )
-            resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-            try:
-                p = _parse_proposal(resp)
-                if p.version == "v0":
+            attempts = 0
+            while attempts < max(2, run_cfg.max_llm_attempts) and not v0_written:
+                attempts += 1
+                resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+                try:
+                    p = _parse_proposal(resp)
+                    if p.version != "v0":
+                        continue
                     validate_python_syntax(p.new_policy_code)
                     fn_name = extract_function_name(p.new_policy_code)
-                    if fn_name == "predict_v0":
-                        v0_error_analysis = p.error_analysis or v0_error_analysis
-                        tests_code = default_tests
-                        if p.new_tests:
-                            lines = ["TESTS = ["]
-                            for t in p.new_tests:
-                                name = t.get("name", "")
-                                code = t.get("code", "")
-                                lines.append(
-                                    f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},"
-                                )
-                            lines.append("]")
-                            tests_code = "\n".join(lines) + "\n"
-                        write_text(
-                            heuristic_path,
-                            header + p.new_policy_code.strip() + "\n\n" + tests_code.strip() + "\n",
+                    if fn_name != "predict_v0":
+                        continue
+
+                    v0_error_analysis = p.error_analysis or v0_error_analysis
+
+                    tests: list[dict] = [{"name": "predict_returns_int", "code": "assert predict_v0({}) in (0, 1)"}]
+                    if p.new_tests:
+                        tests.extend([t for t in p.new_tests if isinstance(t, dict)])
+
+                    tmp_ns: dict = {}
+                    tmp_code = header + p.new_policy_code.strip() + "\n"
+                    exec(compile(tmp_code, "<v0>", "exec"), tmp_ns, tmp_ns)
+                    ok, msg = _run_assert_tests(tmp_ns, tests)
+                    if not ok:
+                        continue
+
+                    v0_fn = tmp_ns.get("predict_v0")
+                    if not callable(v0_fn):
+                        continue
+                    y_pred_train_v0 = _predict_with_function(v0_fn, train_df, label_col)
+                    ok, msg = _sanity_check_not_collapsed(y_pred_train_v0)
+                    if not ok:
+                        continue
+
+                    lines = ["TESTS = ["]
+                    for t in tests:
+                        name = t.get("name", "")
+                        code = t.get("code", "")
+                        lines.append(
+                            f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},"
                         )
-                        append_text(
-                            heuristic_path,
-                            f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n",
-                        )
-                        v0_written = True
-            except Exception:
-                v0_written = False
+                    lines.append("]")
+                    tests_code = "\n".join(lines) + "\n"
+
+                    write_text(
+                        heuristic_path,
+                        header + p.new_policy_code.strip() + "\n\n" + tests_code.strip() + "\n",
+                    )
+                    append_text(
+                        heuristic_path,
+                        f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n",
+                    )
+                    v0_written = True
+                except Exception:
+                    continue
         if not v0_written:
             write_text(heuristic_path, header + default_code.strip() + "\n\n" + default_tests.strip() + "\n")
             append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
