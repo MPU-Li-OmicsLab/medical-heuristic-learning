@@ -11,3 +11,6 @@ final_heuristic_model.py
 heuristic_system.py
 probe_univariate_results.csv
 probe_knowledge.md
+out*/
+data/
+*.pdf

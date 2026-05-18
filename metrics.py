@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 
-@dataclass(frozen=True)
-class MetricsResult:
-    values: dict[str, float]
-
-
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray | None = None) -> MetricsResult:
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray | None = None) -> dict[str, float]:
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
 
@@ -33,15 +26,13 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray 
         except Exception:
             auc = float("nan")
 
-    return MetricsResult(
-        values={
-            "ACC": acc,
-            "F1": f1,
-            "AUC": auc,
-            "Sensitivity": sensitivity,
-            "Specificity": specificity,
-        }
-    )
+    return {
+        "ACC": acc,
+        "F1": f1,
+        "AUC": auc,
+        "Sensitivity": sensitivity,
+        "Specificity": specificity,
+    }
 
 
 def generate_metric_description(metric_priority: list[str] | tuple[str, ...]) -> str:
@@ -51,4 +42,3 @@ def generate_metric_description(metric_priority: list[str] | tuple[str, ...]) ->
     if len(metrics) == 1:
         return f"本次优化首要关注 {metrics[0]} 值。"
     return f"本次优化首要关注 {metrics[0]} 值，其次为 {metrics[1]}。请优先改进假阴性与假阳性之间的平衡。"
-
