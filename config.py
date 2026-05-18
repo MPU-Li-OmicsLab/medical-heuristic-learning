@@ -8,7 +8,7 @@ from pathlib import Path
 class LLMConfig:
     base_url: str = "https://api.deepseek.com/v1"
     api_key_env: str = "DEEPSEEK_API_KEY"
-    model_name: str = "deepseek-v4-flash"
+    model_name: str = "deepseek-v4-pro"
     temperature: float = 0.3
 
 
@@ -23,7 +23,7 @@ class RunConfig:
     degradation_threshold: int = 10
     degradation_rate: float = 0.05
     degradation_max_examples: int = 30
-    max_llm_attempts: int = 2
+    max_llm_attempts: int = 4
     task_description: str = ""
     enable_auto_patch: bool = False
     max_specificity_drop: float = 1.0

@@ -109,6 +109,7 @@ def _extract_base_calibration_sub(fn_source: str) -> float | None:
         mod = ast.parse(fn_source)
     except Exception:
         return None
+
     fndef: ast.FunctionDef | None = None
     for n in mod.body:
         if isinstance(n, ast.FunctionDef):
@@ -117,21 +118,35 @@ def _extract_base_calibration_sub(fn_source: str) -> float | None:
     if fndef is None:
         return None
 
+    def _const_num(node: ast.AST) -> float | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        return None
+
     saw_score_init = False
     for stmt in fndef.body[:10]:
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            if stmt.targets[0].id == "score" and isinstance(stmt.value, ast.Constant) and stmt.value.value == 0.5:
-                saw_score_init = True
-                continue
+            if stmt.targets[0].id == "score":
+                v = stmt.value
+                c = _const_num(v)
+                if c is not None and abs(c - 0.5) < 1e-12:
+                    saw_score_init = True
+                    continue
+                if isinstance(v, ast.BinOp) and isinstance(v.op, ast.Sub):
+                    left = _const_num(v.left)
+                    right = _const_num(v.right)
+                    if left is not None and right is not None and abs(left - 0.5) < 1e-12:
+                        return right
+
         if saw_score_init and isinstance(stmt, ast.AugAssign):
             if (
                 isinstance(stmt.target, ast.Name)
                 and stmt.target.id == "score"
                 and isinstance(stmt.op, ast.Sub)
-                and isinstance(stmt.value, ast.Constant)
-                and isinstance(stmt.value.value, (int, float))
+                and (c := _const_num(stmt.value)) is not None
             ):
-                return float(stmt.value.value)
+                return c
+
     return None
 
 
@@ -140,6 +155,7 @@ def _patch_base_calibration_sub(fn_source: str, new_sub: float) -> str | None:
         mod = ast.parse(fn_source)
     except Exception:
         return None
+
     fndef: ast.FunctionDef | None = None
     for n in mod.body:
         if isinstance(n, ast.FunctionDef):
@@ -148,12 +164,32 @@ def _patch_base_calibration_sub(fn_source: str, new_sub: float) -> str | None:
     if fndef is None:
         return None
 
+    def _const_num(node: ast.AST) -> float | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        return None
+
     saw_score_init = False
     for stmt in fndef.body[:10]:
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            if stmt.targets[0].id == "score" and isinstance(stmt.value, ast.Constant) and stmt.value.value == 0.5:
-                saw_score_init = True
-                continue
+            if stmt.targets[0].id == "score":
+                v = stmt.value
+                c = _const_num(v)
+                if c is not None and abs(c - 0.5) < 1e-12:
+                    saw_score_init = True
+                    continue
+                if isinstance(v, ast.BinOp) and isinstance(v.op, ast.Sub):
+                    left = _const_num(v.left)
+                    right = _const_num(v.right)
+                    if left is not None and right is not None and abs(left - 0.5) < 1e-12:
+                        v.right = ast.Constant(value=float(new_sub))
+                        tmp_mod = ast.Module(body=[fndef], type_ignores=[])
+                        ast.fix_missing_locations(tmp_mod)
+                        try:
+                            return ast.unparse(tmp_mod)
+                        except Exception:
+                            return None
+
         if saw_score_init and isinstance(stmt, ast.AugAssign):
             if isinstance(stmt.target, ast.Name) and stmt.target.id == "score" and isinstance(stmt.op, ast.Sub):
                 stmt.value = ast.Constant(value=float(new_sub))
@@ -163,6 +199,7 @@ def _patch_base_calibration_sub(fn_source: str, new_sub: float) -> str | None:
                     return ast.unparse(tmp_mod)
                 except Exception:
                     return None
+
     return None
 
 
@@ -991,14 +1028,23 @@ def run_heuristic_learning(
                     "test_metrics": None,
                 }
             )
-            break
+            continue
 
     write_json(iteration_log_path, iteration_log)
 
     if not records:
         raise RuntimeError("未生成任何版本记录。")
 
-    final_version = records[-1].version
+    def _record_key(r: IterationRecord) -> tuple[float, ...]:
+        vals: list[float] = []
+        for name in run_cfg.metric_priority:
+            v = r.metrics.get(name)
+            vals.append(float(v) if v is not None else float("-inf"))
+        return tuple(vals)
+
+    final_record = max(records, key=_record_key)
+    final_version = final_record.version
+
     export_code = heuristic_path.read_text(encoding="utf-8")
     export_code = export_code.rstrip() + "\n\n" + f"FINAL_VERSION = {json.dumps(final_version)}\n\n" + (
         "def predict(features: dict) -> int:\n"
@@ -1011,7 +1057,12 @@ def run_heuristic_learning(
 
     v0 = records[0]
     v_last = records[-1]
-    content = f"V0={v0.metrics}\nFINAL({v_last.version})={v_last.metrics}\n"
+    content = (
+        f"METRIC_PRIORITY={run_cfg.metric_priority}\n"
+        f"V0={v0.metrics}\n"
+        f"FINAL({final_record.version})={final_record.metrics}\n"
+        f"LAST({v_last.version})={v_last.metrics}\n"
+    )
     if baselines:
         content += f"BASELINES={baselines}\n"
     write_text(final_comparison_path, content)
