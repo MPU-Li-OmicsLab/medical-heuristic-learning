@@ -22,7 +22,7 @@ class LLMClient:
     ) -> None:
         api_key = os.getenv(api_key_env, "")
         if not api_key:
-            raise RuntimeError(f"环境变量 {api_key_env} 未设置，无法调用大模型。")
+            raise RuntimeError(f"Environment variable {api_key_env} is not set; cannot call the LLM.")
 
         self._client = OpenAI(base_url=base_url, api_key=api_key)
         self._model = model_name
@@ -44,4 +44,3 @@ class LLMClient:
             temperature=self._temperature,
         )
         return resp.choices[0].message.content or ""
-

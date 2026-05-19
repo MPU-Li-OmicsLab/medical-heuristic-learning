@@ -39,26 +39,8 @@ def _predict_with_function(fn: Callable[[dict], int], df: pd.DataFrame, label_co
             p = int(fn(feats))
         except Exception:
             p = 0
-        preds.append(1 if p == 1 else 0)
+        preds.append(int(p))
     return np.asarray(preds, dtype=int)
-
-
-def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
-    failed: list[str] = []
-    for t in tests:
-        name = str(t.get("name", ""))
-        code = str(t.get("code", ""))
-        if not code.strip():
-            continue
-        try:
-            exec(code, ns, ns)
-        except Exception as e:
-            failed.append(f"{name}: {e}")
-            if len(failed) >= 10:
-                break
-    if failed:
-        return False, "；".join(failed)
-    return True, ""
 
 
 
@@ -312,19 +294,12 @@ def _load_heuristic_module(path: Path) -> dict:
     return ns
 
 
-def _append_new_version(path: Path, version_code: str, error_analysis: str, new_tests: list[dict]) -> None:
+def _append_new_version(path: Path, version_code: str, error_analysis: str) -> None:
     fn_name = extract_function_name(version_code) or ""
     version = fn_name.replace("predict_", "") if fn_name.startswith("predict_") else ""
     block = "\n\n" + (f"CURRENT_VERSION = {json.dumps(version)}\n\n" if version else "") + version_code.strip() + "\n"
     if error_analysis:
         block += f'\nERROR_ANALYSIS_{fn_name} = {json.dumps(error_analysis, ensure_ascii=False)}\n'
-    if new_tests:
-        block += "\nTESTS.extend([\n"
-        for t in new_tests:
-            name = t.get("name", "")
-            code = t.get("code", "")
-            block += f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},\n"
-        block += "])\n"
     append_text(path, block)
 
 
@@ -335,8 +310,6 @@ def _parse_proposal(text: str) -> ParsedProposal:
         version=str(data.get("version", "")),
         error_analysis=str(data.get("error_analysis", "")),
         new_policy_code=str(data.get("new_policy_code", "")),
-        new_tests=list(data.get("new_tests", []) or []),
-        modified_tests=list(data.get("modified_tests", []) or []),
     )
 
 
@@ -415,41 +388,14 @@ def _train_and_eval_baselines(
     return results
 
 
-def run_heuristic_learning(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
-) -> None:
-    ensure_dir(run_cfg.output_dir)
-    train_df = train_df.reset_index(drop=True)
-    test_df = test_df.reset_index(drop=True)
-
-    if label_col not in train_df.columns or label_col not in test_df.columns:
-        raise ValueError(f"label_col={label_col} 必须同时存在于 train_df 与 test_df。")
-
-    train_cols = [c for c in train_df.columns if c != label_col]
-    test_cols = [c for c in test_df.columns if c != label_col]
-    if set(train_cols) != set(test_cols):
-        raise ValueError("train_df 与 test_df 的特征列集合不一致。")
-
-    feature_cols = train_cols
-    y_true_train = train_df[label_col].astype(int).to_numpy()
-    y_true_test = test_df[label_col].astype(int).to_numpy()
-
-    heuristic_path = run_cfg.output_dir / "heuristic_system.py"
-    evolution_results_path = run_cfg.output_dir / "evolution_results.txt"
-    iteration_log_path = run_cfg.output_dir / "iteration_log.json"
-    final_model_path = run_cfg.output_dir / "final_heuristic_model.py"
-    final_comparison_path = run_cfg.output_dir / "final_comparison.txt"
-    knowledge_path = run_cfg.output_dir / "probe_knowledge.md"
-    univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
-
-    baseline_path = run_cfg.output_dir / "baseline_results.json"
-    baselines: dict[str, dict[str, float]] = {}
-    if run_cfg.train_baselines:
-        baselines = _train_and_eval_baselines(
-            train_df=train_df, test_df=test_df, label_col=label_col, out_dir=run_cfg.output_dir, random_seed=run_cfg.random_seed
-        )
-        write_json(baseline_path, baselines)
-
+def run_univariate_probe_task(
+    *,
+    train_df: pd.DataFrame,
+    label_col: str,
+    run_cfg: RunConfig,
+    univariate_path: Path,
+    feature_cols: list[str],
+) -> tuple[list[str], list[str], str]:
     univariate_df: pd.DataFrame | None = None
     if run_cfg.run_univariate_probe:
         univariate_df = run_univariate_probe(train_df=train_df, label_col=label_col)
@@ -461,40 +407,25 @@ def run_heuristic_learning(
             univariate_df = None
 
     if univariate_df is not None and len(univariate_df) > 0:
-        try:
-            top10_view = univariate_df.head(10)[["rank", "feature", "feature_type", "method", "p_value", "direction"]]
-        except Exception:
-            top10_view = univariate_df.head(10)
-        print("Top-10 重要特征（单变量统计）：")
-        print(top10_view.to_string(index=False))
-
         topk = min(run_cfg.univariate_top_k, len(univariate_df))
         top_features = univariate_df.head(topk)["feature"].tolist()
         report_features = list(top_features)
         univariate_summary = univariate_df.head(topk)[
             ["rank", "feature", "feature_type", "method", "p_value", "missing_rate", "pointbiserial_r", "mwu_p", "binned_or_q4_rel_to_q1"]
         ].to_string(index=False)
-    else:
-        top_features = feature_cols
-        report_features = list(feature_cols)
-        univariate_summary = ""
+        return top_features, report_features, univariate_summary
 
-    metric_desc = generate_metric_description(run_cfg.metric_priority)
+    return list(feature_cols), list(feature_cols), ""
 
-    trajectory_lines: list[str] = []
-    iteration_log: list[dict] = []
-    records: list[IterationRecord] = []
 
-    client: LLMClient | None = None
-    if run_cfg.llm_enabled:
-        client = LLMClient(
-            base_url=llm_cfg.base_url,
-            api_key_env=llm_cfg.api_key_env,
-            model_name=llm_cfg.model_name,
-            temperature=llm_cfg.temperature,
-        )
-
-    knowledge_table = ""
+def run_knowledge_probe_task(
+    *,
+    client: LLMClient | None,
+    top_features: list[str],
+    label_col: str,
+    run_cfg: RunConfig,
+    knowledge_path: Path,
+) -> str:
     if client is not None and run_cfg.run_knowledge_probe:
         knowledge = run_knowledge_probe(
             client=client,
@@ -504,63 +435,82 @@ def run_heuristic_learning(
         )
         knowledge_table = knowledge.markdown_table
         write_text(knowledge_path, knowledge_table)
-    elif knowledge_path.exists():
+        return knowledge_table
+
+    if knowledge_path.exists():
         try:
-            knowledge_table = knowledge_path.read_text(encoding="utf-8").strip()
+            return knowledge_path.read_text(encoding="utf-8").strip()
         except Exception:
-            knowledge_table = ""
+            return ""
+    return ""
 
-    if not heuristic_path.exists():
-        if not run_cfg.run_v0_generation:
-            raise RuntimeError("未找到 heuristic_system.py，且 run_v0_generation=False，无法继续。")
-        if client is None:
-            raise RuntimeError("llm_enabled=False 且 heuristic_system.py 不存在，无法生成 v0。")
 
-        prompt = get_rule_generation_prompt(
-            univariate_summary=univariate_summary,
-            knowledge_table=knowledge_table,
-            metric_desc=metric_desc,
-            task_description=run_cfg.task_description,
-        )
-        resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-        p = _parse_proposal(resp)
-        if p.version != "v0":
-            raise RuntimeError(f"v0 生成失败：version 不匹配，期望 v0，实际 {p.version}")
-        validate_python_syntax(p.new_policy_code)
-        fn_name = extract_function_name(p.new_policy_code)
-        if fn_name != "predict_v0":
-            raise RuntimeError(f"v0 生成失败：函数名不匹配，期望 predict_v0，实际 {fn_name}")
+def generate_v0_task(
+    *,
+    client: LLMClient | None,
+    run_cfg: RunConfig,
+    heuristic_path: Path,
+    univariate_summary: str,
+    knowledge_table: str,
+    metric_desc: str,
+) -> None:
+    if heuristic_path.exists():
+        return
+    if not run_cfg.run_v0_generation:
+        raise RuntimeError("heuristic_system.py not found and run_v0_generation=False; cannot continue.")
+    if client is None:
+        raise RuntimeError("llm_enabled=False and heuristic_system.py is missing; cannot generate v0.")
 
-        header = "CURRENT_VERSION = 'v0'\n\n"
-        tests: list[dict] = []
-        if p.new_tests:
-            tests.extend([t for t in p.new_tests if isinstance(t, dict)])
+    prompt = get_rule_generation_prompt(
+        univariate_summary=univariate_summary,
+        knowledge_table=knowledge_table,
+        metric_desc=metric_desc,
+        task_description=run_cfg.task_description,
+    )
+    resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+    p = _parse_proposal(resp)
+    if p.version != "v0":
+        raise RuntimeError(f"v0 generation failed: version mismatch (expected v0, got {p.version})")
+    validate_python_syntax(p.new_policy_code)
+    fn_name = extract_function_name(p.new_policy_code)
+    if fn_name != "predict_v0":
+        raise RuntimeError(f"v0 generation failed: function name mismatch (expected predict_v0, got {fn_name})")
 
-        lines = ["TESTS = ["]
-        for t in tests:
-            name = t.get("name", "")
-            code = t.get("code", "")
-            lines.append(
-                f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},"
-            )
-        lines.append("]")
-        tests_code = "\n".join(lines) + "\n"
+    header = "CURRENT_VERSION = 'v0'\n\n"
+    write_text(heuristic_path, header + p.new_policy_code.strip() + "\n")
+    v0_error_analysis = p.error_analysis or "v0"
+    append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
 
-        write_text(
-            heuristic_path,
-            header + p.new_policy_code.strip() + "\n\n" + tests_code.strip() + "\n",
-        )
-        v0_error_analysis = p.error_analysis or "v0"
-        append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
 
+def run_iterations_task(
+    *,
+    client: LLMClient | None,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    label_col: str,
+    run_cfg: RunConfig,
+    heuristic_path: Path,
+    evolution_results_path: Path,
+    metric_desc: str,
+    report_features: list[str],
+) -> tuple[list[IterationRecord], list[dict]]:
     ns = _load_heuristic_module(heuristic_path)
     fn_v0 = ns.get("predict_v0")
     if fn_v0 is None:
-        raise RuntimeError("heuristic_system.py 中未找到 predict_v0")
+        raise RuntimeError("predict_v0 not found in heuristic_system.py")
+
+    y_true_train = train_df[label_col].astype(int).to_numpy()
+    y_true_test = test_df[label_col].astype(int).to_numpy()
 
     current_version = "v0"
     current_fn = fn_v0
-    current_idx = 0
+
+    records: list[IterationRecord] = []
+    iteration_log: list[dict] = []
+    trajectory_lines: list[str] = []
+
+    last_regressed_indices: list[int] = []
+    last_regressed_examples: list[dict] = []
 
     code_all = heuristic_path.read_text(encoding="utf-8")
     y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
@@ -594,11 +544,17 @@ def run_heuristic_learning(
             )
             error_report = format_error_report(samples, max_details=run_cfg.max_error_details)
 
-            degradation_warning = (
-                f"本轮约束：允许退化阈值={allowed_degradation}（min={run_cfg.degradation_threshold}, rate={run_cfg.degradation_rate}）；"
-                f"训练集当前指标={train_old}；首要优化指标={primary}。"
+            prev_regression_info = (
+                format_degradation_warning(last_regressed_indices)
+                + "\nregressed_examples_json=\n"
+                + json.dumps(last_regressed_examples, ensure_ascii=False)
             )
-            current_code = code_all
+            degradation_warning = (
+                f"Constraints: allowed_regressions={allowed_degradation} "
+                f"(min={run_cfg.degradation_threshold}, rate={run_cfg.degradation_rate}); "
+                f"current_train_metrics={train_old}; primary_metric={primary}.\n\n"
+                f"Last change regressions (previously correct, now wrong):\n{prev_regression_info}"
+            )
 
             proposal: ParsedProposal | None = None
             accepted = False
@@ -608,7 +564,7 @@ def run_heuristic_learning(
                 attempt += 1
 
                 prompt = get_iteration_prompt(
-                    current_code=current_code,
+                    current_code=code_all,
                     error_report=error_report,
                     trajectory="\n".join(trajectory_lines),
                     degradation_warning=degradation_warning,
@@ -621,63 +577,51 @@ def run_heuristic_learning(
                     proposal = _parse_proposal(resp)
                     last_proposal = proposal
                 except Exception as e:
-                    degradation_warning = f"JSON 解析失败：{e}"
+                    degradation_warning = f"JSON parse failed: {e}"
                     continue
 
                 if proposal.version != next_version:
-                    degradation_warning = f"version 不匹配：期望 {next_version}，实际 {proposal.version}"
+                    degradation_warning = f"version mismatch: expected {next_version}, got {proposal.version}"
                     continue
 
                 new_code = proposal.new_policy_code
                 validate_python_syntax(new_code)
                 fn_name = extract_function_name(new_code)
                 if fn_name != f"predict_{next_version}":
-                    degradation_warning = f"函数名不匹配：期望 predict_{next_version}，实际 {fn_name}"
+                    degradation_warning = f"function name mismatch: expected predict_{next_version}, got {fn_name}"
                     continue
 
                 tmp_ns: dict = {}
-                exec(compile(current_code + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
+                exec(compile(code_all + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
                 new_fn = tmp_ns.get(f"predict_{next_version}")
                 if new_fn is None:
-                    degradation_warning = "新函数未定义成功。"
+                    degradation_warning = "New function was not defined successfully."
                     continue
 
                 y_pred_old = y_pred_train
                 y_pred_new = _predict_with_function(new_fn, train_df, label_col)
                 degr = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred_new)
+                examples = collect_degradation_examples(
+                    df=train_df,
+                    label_col=label_col,
+                    degraded_indices=degr.degraded_indices,
+                    y_pred_old=y_pred_old,
+                    y_pred_new=y_pred_new,
+                    feature_cols=report_features,
+                    max_samples=run_cfg.degradation_max_examples,
+                    random_seed=run_cfg.random_seed + 1000 + i + attempt,
+                )
 
                 if len(degr.degraded_indices) > allowed_degradation:
-                    examples = collect_degradation_examples(
-                        df=train_df,
-                        label_col=label_col,
-                        degraded_indices=degr.degraded_indices,
-                        y_pred_old=y_pred_old,
-                        y_pred_new=y_pred_new,
-                        feature_cols=report_features,
-                        max_samples=run_cfg.degradation_max_examples,
-                        random_seed=run_cfg.random_seed + 1000 + i + attempt,
-                    )
                     degradation_warning = (
                         format_degradation_warning(degr.degraded_indices)
-                        + f"\n允许退化阈值={allowed_degradation}\n"
-                        + "退化样本示例（JSON）=\n"
+                        + f"\nallowed_regressions={allowed_degradation}\n"
+                        + "regressed_examples_json=\n"
                         + json.dumps(examples, ensure_ascii=False)
                     )
                     continue
 
-                base_tests = tmp_ns.get("TESTS", [])
-                combined_tests: list[dict] = []
-                if isinstance(base_tests, list):
-                    combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
-                combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
-                ok, msg = _run_assert_tests(tmp_ns, combined_tests)
-                if not ok:
-                    degradation_warning = f"回归测试失败：{msg}"
-                    continue
-
-                y_score_new_train = _predict_scores_from_code(
-                    current_code + "\n\n" + new_code, f"predict_{next_version}", train_df, label_col
-                )
+                y_score_new_train = _predict_scores_from_code(code_all + "\n\n" + new_code, f"predict_{next_version}", train_df, label_col)
                 if y_score_new_train is None:
                     y_score_new_train = y_pred_new
                 train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_score_new_train)
@@ -688,28 +632,23 @@ def run_heuristic_learning(
                 if np.isfinite(old_primary) and np.isfinite(new_primary):
                     if not (new_primary > old_primary + 1e-4 or (new_primary >= old_primary - 1e-6 and new_err < old_err)):
                         degradation_warning = (
-                            f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
-                            f"errors {old_err}->{new_err}。请最小修改并改进。"
+                            f"Train metric/errors did not improve: {primary} {old_primary:.6f}->{new_primary:.6f}, "
+                            f"errors {old_err}->{new_err}. Please make a minimal change and improve."
                         )
                         continue
 
-                _append_new_version(
-                    heuristic_path,
-                    version_code=new_code,
-                    error_analysis=proposal.error_analysis,
-                    new_tests=proposal.new_tests,
-                )
-
+                _append_new_version(heuristic_path, version_code=new_code, error_analysis=proposal.error_analysis)
                 ns = _load_heuristic_module(heuristic_path)
                 current_fn = ns.get(f"predict_{next_version}")
                 if current_fn is None:
-                    degradation_warning = "新版本写入后无法加载。"
+                    degradation_warning = "Failed to load the new version after writing."
                     continue
 
                 current_version = next_version
+                last_regressed_indices = list(degr.degraded_indices)
+                last_regressed_examples = list(examples)
                 trajectory_lines.append(f"V{i}: {proposal.error_analysis}")
                 accepted = True
-                current_idx = i
 
                 code_all = heuristic_path.read_text(encoding="utf-8")
                 y_pred_test = _predict_with_function(current_fn, test_df, label_col)
@@ -745,25 +684,98 @@ def run_heuristic_learning(
                         "test_metrics": None,
                     }
                 )
-                continue
+                break
 
     if run_cfg.run_iterations and client is None:
         iteration_log.append(
             {
-                "version": f"v{current_idx + 1}",
+                "version": "v1",
                 "attempt": 0,
                 "error_report": "",
-                "degradation_warning": "llm_enabled=False，无法进行迭代。",
+                "degradation_warning": "llm_enabled=False; cannot run iterations.",
                 "proposal": None,
                 "train_metrics_old": {},
                 "test_metrics": None,
             }
         )
 
+    return records, iteration_log
+
+
+def run_heuristic_learning(
+    train_df: pd.DataFrame, test_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
+) -> None:
+    ensure_dir(run_cfg.output_dir)
+    train_df = train_df.reset_index(drop=True)
+    test_df = test_df.reset_index(drop=True)
+
+    if label_col not in train_df.columns or label_col not in test_df.columns:
+        raise ValueError(f"label_col={label_col} must exist in both train_df and test_df.")
+
+    train_cols = [c for c in train_df.columns if c != label_col]
+    test_cols = [c for c in test_df.columns if c != label_col]
+    if set(train_cols) != set(test_cols):
+        raise ValueError("train_df and test_df must have the same set of feature columns.")
+
+    feature_cols = train_cols
+
+    heuristic_path = run_cfg.output_dir / "heuristic_system.py"
+    evolution_results_path = run_cfg.output_dir / "evolution_results.txt"
+    iteration_log_path = run_cfg.output_dir / "iteration_log.json"
+    final_model_path = run_cfg.output_dir / "final_heuristic_model.py"
+    final_comparison_path = run_cfg.output_dir / "final_comparison.txt"
+    knowledge_path = run_cfg.output_dir / "probe_knowledge.md"
+    univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
+
+    metric_desc = generate_metric_description(run_cfg.metric_priority)
+
+    client: LLMClient | None = None
+    if run_cfg.llm_enabled:
+        client = LLMClient(
+            base_url=llm_cfg.base_url,
+            api_key_env=llm_cfg.api_key_env,
+            model_name=llm_cfg.model_name,
+            temperature=llm_cfg.temperature,
+        )
+
+    top_features, report_features, univariate_summary = run_univariate_probe_task(
+        train_df=train_df,
+        label_col=label_col,
+        run_cfg=run_cfg,
+        univariate_path=univariate_path,
+        feature_cols=feature_cols,
+    )
+    knowledge_table = run_knowledge_probe_task(
+        client=client,
+        top_features=top_features,
+        label_col=label_col,
+        run_cfg=run_cfg,
+        knowledge_path=knowledge_path,
+    )
+    generate_v0_task(
+        client=client,
+        run_cfg=run_cfg,
+        heuristic_path=heuristic_path,
+        univariate_summary=univariate_summary,
+        knowledge_table=knowledge_table,
+        metric_desc=metric_desc,
+    )
+    records, iteration_log = run_iterations_task(
+        client=client,
+        train_df=train_df,
+        test_df=test_df,
+        label_col=label_col,
+        run_cfg=run_cfg,
+        heuristic_path=heuristic_path,
+        evolution_results_path=evolution_results_path,
+        metric_desc=metric_desc,
+        report_features=report_features,
+    )
+
     write_json(iteration_log_path, iteration_log)
 
     if not records:
-        raise RuntimeError("未生成任何版本记录。")
+        raise RuntimeError("No version records were generated.")
 
     def _record_key(r: IterationRecord) -> tuple[float, ...]:
         vals: list[float] = []
@@ -781,7 +793,7 @@ def run_heuristic_learning(
         f"    return predict_{final_version}(features)\n"
     ) + "\n\n" + (
         "if __name__ == '__main__':\n"
-        "    assert predict({}) in (0, 1)\n"
+        "    assert isinstance(predict({}), int)\n"
     )
     write_text(final_model_path, export_code + "\n")
 
@@ -793,8 +805,6 @@ def run_heuristic_learning(
         f"FINAL({final_record.version})={final_record.metrics}\n"
         f"LAST({v_last.version})={v_last.metrics}\n"
     )
-    if baselines:
-        content += f"BASELINES={baselines}\n"
     write_text(final_comparison_path, content)
 
 

@@ -22,7 +22,7 @@ class RunConfig:
     run_knowledge_probe: bool = True
     run_v0_generation: bool = True
     run_iterations: bool = True
-    max_error_samples: int = 20
+    max_error_samples: int = 100
     max_error_details: int = 40
     degradation_threshold: int = 10
     degradation_rate: float = 0.05

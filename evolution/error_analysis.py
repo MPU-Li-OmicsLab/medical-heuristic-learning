@@ -28,22 +28,13 @@ def collect_errors(
     if len(wrong) == 0:
         return []
 
-    fp = [i for i in wrong if y_true[i] == 0 and y_pred[i] == 1]
-    fn = [i for i in wrong if y_true[i] == 1 and y_pred[i] == 0]
-
     rng = np.random.default_rng(random_seed)
+    is_binary = set(np.unique(y_true).tolist()).issubset({0, 1})
 
-    keep: list[int] = []
-    if max_error_samples <= 0:
-        keep = list(wrong)
+    if max_error_samples > 0 and len(wrong) > max_error_samples:
+        keep = list(rng.choice(wrong, size=max_error_samples, replace=False))
     else:
-        half = max_error_samples // 2
-        n_fp = min(len(fp), half)
-        n_fn = min(len(fn), max_error_samples - n_fp)
-        if n_fn < half:
-            n_fp = min(len(fp), max_error_samples - n_fn)
-        keep.extend(list(rng.choice(fp, size=n_fp, replace=False)) if n_fp > 0 else [])
-        keep.extend(list(rng.choice(fn, size=n_fn, replace=False)) if n_fn > 0 else [])
+        keep = [int(i) for i in wrong]
 
     samples: list[ErrorSample] = []
     if feature_cols is None:
@@ -51,22 +42,30 @@ def collect_errors(
     for i in keep:
         row = df.iloc[int(i)]
         features = {c: row[c] for c in feature_cols}
-        kind = "FP" if (y_true[i] == 0 and y_pred[i] == 1) else "FN"
+        if is_binary:
+            kind = "FP" if (y_true[i] == 0 and y_pred[i] == 1) else "FN"
+        else:
+            kind = "ERR"
         samples.append(ErrorSample(idx=int(i), y_true=int(y_true[i]), y_pred=int(y_pred[i]), kind=kind, features=features))
     return samples
 
 
 def format_error_report(samples: list[ErrorSample], max_details: int = 40) -> str:
     if not samples:
-        return "无错误样本。"
+        return "No error samples."
     fp = sum(1 for s in samples if s.kind == "FP")
     fn = sum(1 for s in samples if s.kind == "FN")
-    lines = [f"错误样本数={len(samples)} (FP={fp}, FN={fn})", ""]
+    other = len(samples) - fp - fn
+    if fp + fn > 0 and other == 0:
+        header = f"Error samples={len(samples)} (FP={fp}, FN={fn})"
+    else:
+        header = f"Error samples={len(samples)}"
+    lines = [header, ""]
     shown = samples[: max(0, max_details)]
     for s in shown:
         lines.append(f"- idx={s.idx} kind={s.kind} y_true={s.y_true} y_pred={s.y_pred}")
         lines.append(f"  features={s.features}")
     if len(shown) < len(samples):
         lines.append("")
-        lines.append(f"（仅展示前 {len(shown)} 条错误样本详情，其余已省略）")
+        lines.append(f"(Showing only the first {len(shown)} samples; the rest are omitted.)")
     return "\n".join(lines)

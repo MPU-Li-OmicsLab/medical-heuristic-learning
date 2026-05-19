@@ -10,8 +10,6 @@ class ParsedProposal:
     version: str
     error_analysis: str
     new_policy_code: str
-    new_tests: list[dict]
-    modified_tests: list[dict]
 
 
 def strip_code_fences(text: str) -> str:
@@ -35,4 +33,3 @@ def extract_function_name(code: str) -> str | None:
         if isinstance(node, ast.FunctionDef):
             return node.name
     return None
-

@@ -23,12 +23,12 @@ def detect_degradation(y_true: np.ndarray, y_pred_old: np.ndarray, y_pred_new: n
 
 def format_degradation_warning(indices: list[int], max_items: int = 20) -> str:
     if not indices:
-        return "无退化案例。"
+        return "No regressions."
     shown = indices[:max_items]
     more = len(indices) - len(shown)
-    msg = f"退化案例数={len(indices)}，示例索引={shown}"
+    msg = f"Regressions={len(indices)}, example_indices={shown}"
     if more > 0:
-        msg += f"（另有 {more} 条未展示）"
+        msg += f" ({more} more not shown)"
     return msg
 
 
