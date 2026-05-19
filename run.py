@@ -646,6 +646,14 @@ def run_heuristic_learning(
     y_true_train = train_df[label_col].astype(int).to_numpy()
     y_true_test = test_df[label_col].astype(int).to_numpy()
 
+    heuristic_path = run_cfg.output_dir / "heuristic_system.py"
+    evolution_results_path = run_cfg.output_dir / "evolution_results.txt"
+    iteration_log_path = run_cfg.output_dir / "iteration_log.json"
+    final_model_path = run_cfg.output_dir / "final_heuristic_model.py"
+    final_comparison_path = run_cfg.output_dir / "final_comparison.txt"
+    knowledge_path = run_cfg.output_dir / "probe_knowledge.md"
+    univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
+
     baseline_path = run_cfg.output_dir / "baseline_results.json"
     baselines: dict[str, dict[str, float]] = {}
     if run_cfg.train_baselines:
@@ -654,32 +662,36 @@ def run_heuristic_learning(
         )
         write_json(baseline_path, baselines)
 
-    univariate_df = run_univariate_probe(train_df=train_df, label_col=label_col)
-    univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
-    univariate_df.to_csv(univariate_path, index=False)
+    univariate_df: pd.DataFrame | None = None
+    if run_cfg.run_univariate_probe:
+        univariate_df = run_univariate_probe(train_df=train_df, label_col=label_col)
+        univariate_df.to_csv(univariate_path, index=False)
+    elif univariate_path.exists():
+        try:
+            univariate_df = pd.read_csv(univariate_path)
+        except Exception:
+            univariate_df = None
 
-    try:
-        top10_view = univariate_df.head(10)[["rank", "feature", "feature_type", "method", "p_value", "direction"]]
-    except Exception:
-        top10_view = univariate_df.head(10)
-    print("Top-10 重要特征（单变量统计）：")
-    print(top10_view.to_string(index=False))
+    if univariate_df is not None and len(univariate_df) > 0:
+        try:
+            top10_view = univariate_df.head(10)[["rank", "feature", "feature_type", "method", "p_value", "direction"]]
+        except Exception:
+            top10_view = univariate_df.head(10)
+        print("Top-10 重要特征（单变量统计）：")
+        print(top10_view.to_string(index=False))
 
-    topk = min(run_cfg.univariate_top_k, len(univariate_df))
-    top_features = univariate_df.head(topk)["feature"].tolist()
-    report_features = _pick_report_features(feature_cols=feature_cols, top_features=top_features)
-    univariate_summary = univariate_df.head(topk)[
-        ["rank", "feature", "feature_type", "method", "p_value", "missing_rate", "pointbiserial_r", "mwu_p", "binned_or_q4_rel_to_q1"]
-    ].to_string(index=False)
+        topk = min(run_cfg.univariate_top_k, len(univariate_df))
+        top_features = univariate_df.head(topk)["feature"].tolist()
+        report_features = _pick_report_features(feature_cols=feature_cols, top_features=top_features)
+        univariate_summary = univariate_df.head(topk)[
+            ["rank", "feature", "feature_type", "method", "p_value", "missing_rate", "pointbiserial_r", "mwu_p", "binned_or_q4_rel_to_q1"]
+        ].to_string(index=False)
+    else:
+        top_features = feature_cols
+        report_features = _pick_report_features(feature_cols=feature_cols, top_features=[])
+        univariate_summary = ""
 
     metric_desc = generate_metric_description(run_cfg.metric_priority)
-
-    heuristic_path = run_cfg.output_dir / "heuristic_system.py"
-    evolution_results_path = run_cfg.output_dir / "evolution_results.txt"
-    iteration_log_path = run_cfg.output_dir / "iteration_log.json"
-    final_model_path = run_cfg.output_dir / "final_heuristic_model.py"
-    final_comparison_path = run_cfg.output_dir / "final_comparison.txt"
-    knowledge_path = run_cfg.output_dir / "probe_knowledge.md"
 
     trajectory_lines: list[str] = []
     iteration_log: list[dict] = []
@@ -695,7 +707,7 @@ def run_heuristic_learning(
         )
 
     knowledge_table = ""
-    if client is not None:
+    if client is not None and run_cfg.run_knowledge_probe:
         knowledge = run_knowledge_probe(
             client=client,
             features=top_features[: run_cfg.knowledge_top_k],
@@ -704,10 +716,36 @@ def run_heuristic_learning(
         )
         knowledge_table = knowledge.markdown_table
         write_text(knowledge_path, knowledge_table)
-    else:
-        write_text(knowledge_path, "")
+    elif knowledge_path.exists():
+        try:
+            knowledge_table = knowledge_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            knowledge_table = ""
+
+    existing_versions: set[str] = set()
+    if evolution_results_path.exists():
+        try:
+            for line in evolution_results_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                left, _, right = line.partition("\t")
+                v = left.strip()
+                if not v:
+                    continue
+                existing_versions.add(v)
+                try:
+                    m = ast.literal_eval(right.strip())
+                    if isinstance(m, dict):
+                        metrics = {str(k): float(vv) for k, vv in m.items()}
+                        records.append(IterationRecord(version=v, error_analysis="", metrics=metrics))
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     if not heuristic_path.exists():
+        if not run_cfg.run_v0_generation:
+            raise RuntimeError("未找到 heuristic_system.py，且 run_v0_generation=False，无法继续。")
         header = "CURRENT_VERSION = 'v0'\n\n"
         default_code, default_tests = _default_rule_v0_code(feature_cols=feature_cols)
         v0_error_analysis = "default_v0"
@@ -783,252 +821,288 @@ def run_heuristic_learning(
     if fn_v0 is None:
         raise RuntimeError("heuristic_system.py 中未找到 predict_v0")
 
-    code_all = heuristic_path.read_text(encoding="utf-8")
-    y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
-    y_score_test_v0 = _predict_scores_from_code(code_all, "predict_v0", test_df, label_col)
-    if y_score_test_v0 is None:
-        y_score_test_v0 = y_pred_test_v0
-    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_score_test_v0)
-    v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
-    records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
-    append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
-    trajectory_lines.append(f"V0: {v0_analysis}")
+    def _parse_version_index(v: str) -> int:
+        if isinstance(v, str) and v.startswith("v") and v[1:].isdigit():
+            return int(v[1:])
+        return 0
 
-    current_version = "v0"
-    current_fn = fn_v0
+    cv = ns.get("CURRENT_VERSION")
+    current_version = cv if isinstance(cv, str) and cv.startswith("v") and cv[1:].isdigit() else "v0"
+    current_fn = ns.get(f"predict_{current_version}") or fn_v0
+    current_idx = _parse_version_index(current_version)
 
-    for i in range(1, run_cfg.iterations + 1):
-        next_version = f"v{i}"
+    for v in sorted(existing_versions, key=_parse_version_index):
+        ea = ns.get(f"ERROR_ANALYSIS_predict_{v}")
+        if isinstance(ea, str) and ea.strip():
+            trajectory_lines.append(f"{v.upper()}: {ea.strip()}")
+
+    if "v0" not in existing_versions:
         code_all = heuristic_path.read_text(encoding="utf-8")
-        y_pred_train = _predict_with_function(current_fn, train_df, label_col)
-        y_score_train = _predict_scores_from_code(code_all, f"predict_{current_version}", train_df, label_col)
-        if y_score_train is None:
-            y_score_train = y_pred_train
-        train_old = compute_metrics(y_true_train, y_pred_train, y_score=y_score_train)
-        primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
-        allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
-        samples = collect_errors(
-            df=train_df,
-            label_col=label_col,
-            y_pred=y_pred_train,
-            max_error_samples=run_cfg.max_error_samples,
-            random_seed=run_cfg.random_seed + i,
-            feature_cols=report_features,
-        )
-        error_report = format_error_report(samples, max_details=run_cfg.max_error_details)
+        y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
+        y_score_test_v0 = _predict_scores_from_code(code_all, "predict_v0", test_df, label_col)
+        if y_score_test_v0 is None:
+            y_score_test_v0 = y_pred_test_v0
+        metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_score_test_v0)
+        v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
+        records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
+        append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
+        trajectory_lines.append(f"V0: {v0_analysis}")
+        existing_versions.add("v0")
 
-        degradation_warning = (
-            f"本轮约束：允许退化阈值={allowed_degradation}（min={run_cfg.degradation_threshold}, rate={run_cfg.degradation_rate}）；"
-            f"训练集当前指标={train_old}；首要优化指标={primary}。"
-        )
-        current_code = code_all
-
-        proposal: ParsedProposal | None = None
-        accepted = False
-        attempt = 0
-        last_proposal: ParsedProposal | None = None
-        if client is None:
-            break
-
-        while attempt < run_cfg.max_llm_attempts and not accepted:
-            attempt += 1
-
-            prompt = get_iteration_prompt(
-                current_code=current_code,
-                error_report=error_report,
-                trajectory="\n".join(trajectory_lines),
-                degradation_warning=degradation_warning,
-                metric_desc=metric_desc,
-                task_description=run_cfg.task_description,
-                next_version=next_version,
-            )
-            resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-            try:
-                proposal = _parse_proposal(resp)
-                last_proposal = proposal
-            except Exception as e:
-                degradation_warning = f"JSON 解析失败：{e}"
-                continue
-
-            if proposal.version != next_version:
-                degradation_warning = f"version 不匹配：期望 {next_version}，实际 {proposal.version}"
-                continue
-
-            new_code = proposal.new_policy_code
-            validate_python_syntax(new_code)
-            fn_name = extract_function_name(new_code)
-            if fn_name != f"predict_{next_version}":
-                degradation_warning = f"函数名不匹配：期望 predict_{next_version}，实际 {fn_name}"
-                continue
-
-            tmp_ns: dict = {}
-            exec(compile(current_code + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
-            new_fn = tmp_ns.get(f"predict_{next_version}")
-            if new_fn is None:
-                degradation_warning = "新函数未定义成功。"
-                continue
-
-            y_pred_old = y_pred_train
-            y_pred_new = _predict_with_function(new_fn, train_df, label_col)
-            degr = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred_new)
-
-            if len(degr.degraded_indices) > allowed_degradation:
-                examples = collect_degradation_examples(
-                    df=train_df,
-                    label_col=label_col,
-                    degraded_indices=degr.degraded_indices,
-                    y_pred_old=y_pred_old,
-                    y_pred_new=y_pred_new,
-                    feature_cols=report_features,
-                    max_samples=run_cfg.degradation_max_examples,
-                    random_seed=run_cfg.random_seed + 1000 + i + attempt,
-                )
-                degradation_warning = (
-                    format_degradation_warning(degr.degraded_indices)
-                    + f"\n允许退化阈值={allowed_degradation}\n"
-                    + "退化样本示例（JSON）=\n"
-                    + json.dumps(examples, ensure_ascii=False)
-                )
-                continue
-
-            base_tests = tmp_ns.get("TESTS", [])
-            combined_tests: list[dict] = []
-            if isinstance(base_tests, list):
-                combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
-            combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
-            ok, msg = _run_assert_tests(tmp_ns, combined_tests)
-            if not ok:
-                degradation_warning = f"回归测试失败：{msg}"
-                continue
-
-            y_score_new_train = _predict_scores_from_code(current_code + "\n\n" + new_code, f"predict_{next_version}", train_df, label_col)
-            if y_score_new_train is None:
-                y_score_new_train = y_pred_new
-            train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_score_new_train)
-            old_primary = float(train_old.get(primary, float("nan")))
-            new_primary = float(train_new.get(primary, float("nan")))
-            old_err = int(np.sum(y_pred_old != y_true_train))
-            new_err = int(np.sum(y_pred_new != y_true_train))
-            if np.isfinite(old_primary) and np.isfinite(new_primary):
-                if not (new_primary > old_primary + 1e-4 or (new_primary >= old_primary - 1e-6 and new_err < old_err)):
-                    fn_src = _extract_function_source(new_code, f"predict_{next_version}")
-                    base_sub = _extract_base_calibration_sub(fn_src) if fn_src is not None else None
-                    improved_code: str | None = None
-                    improved_train: dict[str, float] | None = None
-                    improved_err: int | None = None
-                    improved_sub: float | None = None
-
-                    if base_sub is not None:
-                        search = [round(x, 2) for x in np.arange(max(0.0, base_sub - 0.2), min(0.6, base_sub + 0.21), 0.05)]
-                        best_key: tuple[float, int] | None = None
-                        for sub in search:
-                            patched_fn_src = _patch_base_calibration_sub(fn_src, new_sub=sub)
-                            if patched_fn_src is None:
-                                continue
-                            patched_code = patched_fn_src
-                            tmp_ns2: dict = {}
-                            try:
-                                exec(compile(current_code + "\n\n" + patched_code, "<heuristic>", "exec"), tmp_ns2, tmp_ns2)
-                            except Exception:
-                                continue
-                            fn2 = tmp_ns2.get(f"predict_{next_version}")
-                            if not callable(fn2):
-                                continue
-                            y_pred2 = _predict_with_function(fn2, train_df, label_col)
-                            degr2 = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred2)
-                            if len(degr2.degraded_indices) > allowed_degradation:
-                                continue
-                            y_score2 = _predict_scores_from_code(current_code + "\n\n" + patched_code, f"predict_{next_version}", train_df, label_col)
-                            if y_score2 is None:
-                                y_score2 = y_pred2
-                            train2 = compute_metrics(y_true_train, y_pred2, y_score=y_score2)
-                            p2 = float(train2.get(primary, float("nan")))
-                            e2 = int(np.sum(y_pred2 != y_true_train))
-
-                            if np.isfinite(old_primary) and np.isfinite(p2):
-                                ok_improve = p2 > old_primary + 1e-4 or (p2 >= old_primary - 1e-6 and e2 < old_err)
-                                if not ok_improve:
-                                    continue
-
-                            key = (p2, -e2)
-                            if best_key is None or key > best_key:
-                                best_key = key
-                                improved_code = patched_code
-                                improved_train = train2
-                                improved_err = e2
-                                improved_sub = sub
-
-                    if improved_code is None:
-                        degradation_warning = (
-                            f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
-                            f"errors {old_err}->{new_err}。请最小修改并改进。"
-                        )
-                        continue
-
-                    new_code = improved_code
-                    train_new = improved_train or train_new
-                    new_primary = float(train_new.get(primary, float("nan")))
-                    new_err = int(improved_err if improved_err is not None else new_err)
-                    proposal = ParsedProposal(
-                        version=proposal.version,
-                        error_analysis=(proposal.error_analysis + f"（自动校准：score -= {base_sub:.2f} -> {improved_sub:.2f}）"),
-                        new_policy_code=new_code,
-                        new_tests=proposal.new_tests,
-                        modified_tests=proposal.modified_tests,
-                    )
-
-            _append_new_version(
-                heuristic_path,
-                version_code=new_code,
-                error_analysis=proposal.error_analysis,
-                new_tests=proposal.new_tests,
-            )
-
-            ns = _load_heuristic_module(heuristic_path)
-            current_fn = ns.get(f"predict_{next_version}")
-            if current_fn is None:
-                degradation_warning = "新版本写入后无法加载。"
-                continue
-
-            current_version = next_version
-            trajectory_lines.append(f"V{i}: {proposal.error_analysis}")
-            accepted = True
-
+    if run_cfg.run_iterations and client is not None:
+        start_i = current_idx + 1
+        end_i = current_idx + run_cfg.iterations
+        for i in range(start_i, end_i + 1):
+            next_version = f"v{i}"
             code_all = heuristic_path.read_text(encoding="utf-8")
-            y_pred_test = _predict_with_function(current_fn, test_df, label_col)
-            y_score_test = _predict_scores_from_code(code_all, f"predict_{current_version}", test_df, label_col)
-            if y_score_test is None:
-                y_score_test = y_pred_test
-            m = compute_metrics(y_true_test, y_pred_test, y_score=y_score_test)
-            records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
-            append_text(evolution_results_path, f"{current_version}\t{m}\n")
-
-            iteration_log.append(
-                {
-                    "version": current_version,
-                    "attempt": attempt,
-                    "error_report": error_report,
-                    "degradation_warning": degradation_warning,
-                    "proposal": asdict(proposal),
-                    "train_metrics_old": train_old,
-                    "train_metrics_new": train_new,
-                    "test_metrics": m,
-                }
+            y_pred_train = _predict_with_function(current_fn, train_df, label_col)
+            y_score_train = _predict_scores_from_code(code_all, f"predict_{current_version}", train_df, label_col)
+            if y_score_train is None:
+                y_score_train = y_pred_train
+            train_old = compute_metrics(y_true_train, y_pred_train, y_score=y_score_train)
+            primary = run_cfg.metric_priority[0] if run_cfg.metric_priority else "F1"
+            allowed_degradation = max(run_cfg.degradation_threshold, int(len(train_df) * run_cfg.degradation_rate))
+            samples = collect_errors(
+                df=train_df,
+                label_col=label_col,
+                y_pred=y_pred_train,
+                max_error_samples=run_cfg.max_error_samples,
+                random_seed=run_cfg.random_seed + i,
+                feature_cols=report_features,
             )
+            error_report = format_error_report(samples, max_details=run_cfg.max_error_details)
 
-        if not accepted:
-            iteration_log.append(
-                {
-                    "version": next_version,
-                    "attempt": attempt,
-                    "error_report": error_report,
-                    "degradation_warning": degradation_warning,
-                    "proposal": asdict(last_proposal) if last_proposal is not None else None,
-                    "train_metrics_old": train_old,
-                    "test_metrics": None,
-                }
+            degradation_warning = (
+                f"本轮约束：允许退化阈值={allowed_degradation}（min={run_cfg.degradation_threshold}, rate={run_cfg.degradation_rate}）；"
+                f"训练集当前指标={train_old}；首要优化指标={primary}。"
             )
-            continue
+            current_code = code_all
+
+            proposal: ParsedProposal | None = None
+            accepted = False
+            attempt = 0
+            last_proposal: ParsedProposal | None = None
+            while attempt < run_cfg.max_llm_attempts and not accepted:
+                attempt += 1
+
+                prompt = get_iteration_prompt(
+                    current_code=current_code,
+                    error_report=error_report,
+                    trajectory="\n".join(trajectory_lines),
+                    degradation_warning=degradation_warning,
+                    metric_desc=metric_desc,
+                    task_description=run_cfg.task_description,
+                    next_version=next_version,
+                )
+                resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+                try:
+                    proposal = _parse_proposal(resp)
+                    last_proposal = proposal
+                except Exception as e:
+                    degradation_warning = f"JSON 解析失败：{e}"
+                    continue
+
+                if proposal.version != next_version:
+                    degradation_warning = f"version 不匹配：期望 {next_version}，实际 {proposal.version}"
+                    continue
+
+                new_code = proposal.new_policy_code
+                validate_python_syntax(new_code)
+                fn_name = extract_function_name(new_code)
+                if fn_name != f"predict_{next_version}":
+                    degradation_warning = f"函数名不匹配：期望 predict_{next_version}，实际 {fn_name}"
+                    continue
+
+                tmp_ns: dict = {}
+                exec(compile(current_code + "\n\n" + new_code, "<heuristic>", "exec"), tmp_ns, tmp_ns)
+                new_fn = tmp_ns.get(f"predict_{next_version}")
+                if new_fn is None:
+                    degradation_warning = "新函数未定义成功。"
+                    continue
+
+                y_pred_old = y_pred_train
+                y_pred_new = _predict_with_function(new_fn, train_df, label_col)
+                degr = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred_new)
+
+                if len(degr.degraded_indices) > allowed_degradation:
+                    examples = collect_degradation_examples(
+                        df=train_df,
+                        label_col=label_col,
+                        degraded_indices=degr.degraded_indices,
+                        y_pred_old=y_pred_old,
+                        y_pred_new=y_pred_new,
+                        feature_cols=report_features,
+                        max_samples=run_cfg.degradation_max_examples,
+                        random_seed=run_cfg.random_seed + 1000 + i + attempt,
+                    )
+                    degradation_warning = (
+                        format_degradation_warning(degr.degraded_indices)
+                        + f"\n允许退化阈值={allowed_degradation}\n"
+                        + "退化样本示例（JSON）=\n"
+                        + json.dumps(examples, ensure_ascii=False)
+                    )
+                    continue
+
+                base_tests = tmp_ns.get("TESTS", [])
+                combined_tests: list[dict] = []
+                if isinstance(base_tests, list):
+                    combined_tests.extend([t for t in base_tests if isinstance(t, dict)])
+                combined_tests.extend([t for t in (proposal.new_tests or []) if isinstance(t, dict)])
+                ok, msg = _run_assert_tests(tmp_ns, combined_tests)
+                if not ok:
+                    degradation_warning = f"回归测试失败：{msg}"
+                    continue
+
+                y_score_new_train = _predict_scores_from_code(
+                    current_code + "\n\n" + new_code, f"predict_{next_version}", train_df, label_col
+                )
+                if y_score_new_train is None:
+                    y_score_new_train = y_pred_new
+                train_new = compute_metrics(y_true_train, y_pred_new, y_score=y_score_new_train)
+                old_primary = float(train_old.get(primary, float("nan")))
+                new_primary = float(train_new.get(primary, float("nan")))
+                old_err = int(np.sum(y_pred_old != y_true_train))
+                new_err = int(np.sum(y_pred_new != y_true_train))
+                if np.isfinite(old_primary) and np.isfinite(new_primary):
+                    if not (new_primary > old_primary + 1e-4 or (new_primary >= old_primary - 1e-6 and new_err < old_err)):
+                        fn_src = _extract_function_source(new_code, f"predict_{next_version}")
+                        base_sub = _extract_base_calibration_sub(fn_src) if fn_src is not None else None
+                        improved_code: str | None = None
+                        improved_train: dict[str, float] | None = None
+                        improved_err: int | None = None
+                        improved_sub: float | None = None
+
+                        if base_sub is not None:
+                            search = [
+                                round(x, 2)
+                                for x in np.arange(max(0.0, base_sub - 0.2), min(0.6, base_sub + 0.21), 0.05)
+                            ]
+                            best_key: tuple[float, int] | None = None
+                            for sub in search:
+                                patched_fn_src = _patch_base_calibration_sub(fn_src, new_sub=sub)
+                                if patched_fn_src is None:
+                                    continue
+                                patched_code = patched_fn_src
+                                tmp_ns2: dict = {}
+                                try:
+                                    exec(compile(current_code + "\n\n" + patched_code, "<heuristic>", "exec"), tmp_ns2, tmp_ns2)
+                                except Exception:
+                                    continue
+                                fn2 = tmp_ns2.get(f"predict_{next_version}")
+                                if not callable(fn2):
+                                    continue
+                                y_pred2 = _predict_with_function(fn2, train_df, label_col)
+                                degr2 = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred2)
+                                if len(degr2.degraded_indices) > allowed_degradation:
+                                    continue
+                                y_score2 = _predict_scores_from_code(
+                                    current_code + "\n\n" + patched_code, f"predict_{next_version}", train_df, label_col
+                                )
+                                if y_score2 is None:
+                                    y_score2 = y_pred2
+                                train2 = compute_metrics(y_true_train, y_pred2, y_score=y_score2)
+                                p2 = float(train2.get(primary, float("nan")))
+                                e2 = int(np.sum(y_pred2 != y_true_train))
+
+                                if np.isfinite(old_primary) and np.isfinite(p2):
+                                    ok_improve = p2 > old_primary + 1e-4 or (p2 >= old_primary - 1e-6 and e2 < old_err)
+                                    if not ok_improve:
+                                        continue
+
+                                key = (p2, -e2)
+                                if best_key is None or key > best_key:
+                                    best_key = key
+                                    improved_code = patched_code
+                                    improved_train = train2
+                                    improved_err = e2
+                                    improved_sub = sub
+
+                        if improved_code is None:
+                            degradation_warning = (
+                                f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
+                                f"errors {old_err}->{new_err}。请最小修改并改进。"
+                            )
+                            continue
+
+                        new_code = improved_code
+                        train_new = improved_train or train_new
+                        new_primary = float(train_new.get(primary, float("nan")))
+                        new_err = int(improved_err if improved_err is not None else new_err)
+                        proposal = ParsedProposal(
+                            version=proposal.version,
+                            error_analysis=(proposal.error_analysis + f"（自动校准：score -= {base_sub:.2f} -> {improved_sub:.2f}）"),
+                            new_policy_code=new_code,
+                            new_tests=proposal.new_tests,
+                            modified_tests=proposal.modified_tests,
+                        )
+
+                _append_new_version(
+                    heuristic_path,
+                    version_code=new_code,
+                    error_analysis=proposal.error_analysis,
+                    new_tests=proposal.new_tests,
+                )
+
+                ns = _load_heuristic_module(heuristic_path)
+                current_fn = ns.get(f"predict_{next_version}")
+                if current_fn is None:
+                    degradation_warning = "新版本写入后无法加载。"
+                    continue
+
+                current_version = next_version
+                trajectory_lines.append(f"V{i}: {proposal.error_analysis}")
+                accepted = True
+                current_idx = i
+
+                code_all = heuristic_path.read_text(encoding="utf-8")
+                y_pred_test = _predict_with_function(current_fn, test_df, label_col)
+                y_score_test = _predict_scores_from_code(code_all, f"predict_{current_version}", test_df, label_col)
+                if y_score_test is None:
+                    y_score_test = y_pred_test
+                m = compute_metrics(y_true_test, y_pred_test, y_score=y_score_test)
+                records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
+                append_text(evolution_results_path, f"{current_version}\t{m}\n")
+                existing_versions.add(current_version)
+
+                iteration_log.append(
+                    {
+                        "version": current_version,
+                        "attempt": attempt,
+                        "error_report": error_report,
+                        "degradation_warning": degradation_warning,
+                        "proposal": asdict(proposal),
+                        "train_metrics_old": train_old,
+                        "train_metrics_new": train_new,
+                        "test_metrics": m,
+                    }
+                )
+
+            if not accepted:
+                iteration_log.append(
+                    {
+                        "version": next_version,
+                        "attempt": attempt,
+                        "error_report": error_report,
+                        "degradation_warning": degradation_warning,
+                        "proposal": asdict(last_proposal) if last_proposal is not None else None,
+                        "train_metrics_old": train_old,
+                        "test_metrics": None,
+                    }
+                )
+                continue
+
+    if run_cfg.run_iterations and client is None:
+        iteration_log.append(
+            {
+                "version": f"v{current_idx + 1}",
+                "attempt": 0,
+                "error_report": "",
+                "degradation_warning": "llm_enabled=False，无法进行迭代。",
+                "proposal": None,
+                "train_metrics_old": {},
+                "test_metrics": None,
+            }
+        )
 
     write_json(iteration_log_path, iteration_log)
 
