@@ -43,36 +43,6 @@ def _predict_with_function(fn: Callable[[dict], int], df: pd.DataFrame, label_co
     return np.asarray(preds, dtype=int)
 
 
-def _pick_report_features(feature_cols: list[str], top_features: list[str]) -> list[str]:
-    preferred = [
-        "Respiratory_failure",
-        "SOFA",
-        "resp_rate",
-        "sepsis",
-        "Kidney_failure",
-        "Urea_Nitrogen",
-        "heart_rate",
-        "age",
-        "inr",
-        "temperature",
-        "ICH",
-        "Chloride",
-        "bicarbonate",
-        "Cerebral_infarction",
-        "ARDS",
-        "wbc",
-        "mbp",
-        "Sodium",
-        "hemoglobin",
-        "platelet",
-    ]
-    selected: list[str] = []
-    for f in list(dict.fromkeys(top_features + preferred)):
-        if f in feature_cols:
-            selected.append(f)
-    return selected
-
-
 def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
     failed: list[str] = []
     for t in tests:
@@ -91,116 +61,6 @@ def _run_assert_tests(ns: dict, tests: Iterable[dict]) -> tuple[bool, str]:
     return True, ""
 
 
-def _sanity_check_not_collapsed(y_pred: np.ndarray) -> tuple[bool, str]:
-    y_pred = np.asarray(y_pred).astype(int)
-    uniq = np.unique(y_pred)
-    if uniq.size == 0:
-        return False, "sanity: empty predictions"
-    if uniq.size == 1:
-        return False, f"sanity: collapsed to constant prediction {int(uniq[0])}"
-    pos_rate = float((y_pred == 1).mean())
-    if pos_rate <= 0.01 or pos_rate >= 0.99:
-        return False, f"sanity: extreme positive rate {pos_rate:.3f}"
-    return True, ""
-
-
-def _extract_base_calibration_sub(fn_source: str) -> float | None:
-    try:
-        mod = ast.parse(fn_source)
-    except Exception:
-        return None
-
-    fndef: ast.FunctionDef | None = None
-    for n in mod.body:
-        if isinstance(n, ast.FunctionDef):
-            fndef = n
-            break
-    if fndef is None:
-        return None
-
-    def _const_num(node: ast.AST) -> float | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return float(node.value)
-        return None
-
-    saw_score_init = False
-    for stmt in fndef.body[:10]:
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            if stmt.targets[0].id == "score":
-                v = stmt.value
-                c = _const_num(v)
-                if c is not None and abs(c - 0.5) < 1e-12:
-                    saw_score_init = True
-                    continue
-                if isinstance(v, ast.BinOp) and isinstance(v.op, ast.Sub):
-                    left = _const_num(v.left)
-                    right = _const_num(v.right)
-                    if left is not None and right is not None and abs(left - 0.5) < 1e-12:
-                        return right
-
-        if saw_score_init and isinstance(stmt, ast.AugAssign):
-            if (
-                isinstance(stmt.target, ast.Name)
-                and stmt.target.id == "score"
-                and isinstance(stmt.op, ast.Sub)
-                and (c := _const_num(stmt.value)) is not None
-            ):
-                return c
-
-    return None
-
-
-def _patch_base_calibration_sub(fn_source: str, new_sub: float) -> str | None:
-    try:
-        mod = ast.parse(fn_source)
-    except Exception:
-        return None
-
-    fndef: ast.FunctionDef | None = None
-    for n in mod.body:
-        if isinstance(n, ast.FunctionDef):
-            fndef = n
-            break
-    if fndef is None:
-        return None
-
-    def _const_num(node: ast.AST) -> float | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return float(node.value)
-        return None
-
-    saw_score_init = False
-    for stmt in fndef.body[:10]:
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            if stmt.targets[0].id == "score":
-                v = stmt.value
-                c = _const_num(v)
-                if c is not None and abs(c - 0.5) < 1e-12:
-                    saw_score_init = True
-                    continue
-                if isinstance(v, ast.BinOp) and isinstance(v.op, ast.Sub):
-                    left = _const_num(v.left)
-                    right = _const_num(v.right)
-                    if left is not None and right is not None and abs(left - 0.5) < 1e-12:
-                        v.right = ast.Constant(value=float(new_sub))
-                        tmp_mod = ast.Module(body=[fndef], type_ignores=[])
-                        ast.fix_missing_locations(tmp_mod)
-                        try:
-                            return ast.unparse(tmp_mod)
-                        except Exception:
-                            return None
-
-        if saw_score_init and isinstance(stmt, ast.AugAssign):
-            if isinstance(stmt.target, ast.Name) and stmt.target.id == "score" and isinstance(stmt.op, ast.Sub):
-                stmt.value = ast.Constant(value=float(new_sub))
-                tmp_mod = ast.Module(body=[fndef], type_ignores=[])
-                ast.fix_missing_locations(tmp_mod)
-                try:
-                    return ast.unparse(tmp_mod)
-                except Exception:
-                    return None
-
-    return None
 
 
 def _extract_function_source(code: str, fn_name: str) -> str | None:
@@ -445,78 +305,6 @@ def _rename_first_function(fn_source: str, new_name: str) -> str | None:
     return None
 
 
-def _default_rule_v0_code(feature_cols: list[str]) -> tuple[str, str]:
-    core = f"""def predict_v0(features: dict) -> int:
-    def _get_float(k: str, default: float = 0.0) -> float:
-        v = features.get(k, default)
-        try:
-            if v is None:
-                return default
-            return float(v)
-        except Exception:
-            return default
-
-    def _get_int(k: str, default: int = 0) -> int:
-        v = features.get(k, default)
-        try:
-            if v is None:
-                return default
-            return int(float(v))
-        except Exception:
-            return default
-
-    score = 0.5
-    # 评分阈值：score >= 0.5 判定为 1（更偏向召回/降低漏诊），score < 0.5 判定为 0。
-    score -= 0.25  # 基础风险校准：默认更偏向阴性，避免全部预测为 1
-
-    if _get_int("Respiratory_failure") == 1:
-        score += 0.25  # 呼吸衰竭通常提示更高危
-
-    age = _get_float("age")
-    if age >= 85:
-        score += 0.10  # 高龄通常更高危
-    elif age >= 75:
-        score += 0.05  # 较高龄风险上升
-
-    if _get_int("sepsis") == 1:
-        score += 0.10  # 脓毒症提示系统性感染风险
-
-    sofa = _get_float("SOFA")
-    if sofa >= 7:
-        score += 0.15  # SOFA 高分提示多器官功能障碍
-    elif sofa >= 5:
-        score += 0.08  # SOFA 中等升高提示风险上升
-
-    if _get_float("wbc") < 8.0:
-        score += 0.05  # 白细胞偏低可能提示免疫抑制/严重感染
-    if _get_int("Cerebral_infarction") == 1:
-        score += 0.03  # 既往脑梗提示基础状态较差
-    if _get_int("ICH") == 1:
-        score += 0.04  # 颅内出血提示更高危
-    if _get_float("mbp") < 85.0:
-        score += 0.04  # 平均动脉压偏低提示循环不稳定
-    if _get_float("Sodium") < 136.0:
-        score += 0.03  # 低钠与不良结局相关（非特异）
-    if _get_float("hemoglobin") < 9.5:
-        score += 0.03  # 贫血可能提示储备差/出血等
-    if _get_float("bicarbonate") < 18.0:
-        score += 0.06  # 低碳酸氢根提示代谢性酸中毒风险
-
-    if _get_float("Urea_Nitrogen") < 12.0 and _get_float("bicarbonate") >= 20.0 and _get_float("SOFA") <= 6.0:
-        score -= 0.08  # 若肾功能与酸碱相对正常且 SOFA 不高，风险下调
-
-    if _get_float("SOFA") >= 7.0 and _get_float("Urea_Nitrogen") < 10.0 and _get_float("bicarbonate") >= 20.0:
-        score -= 0.04  # 对“SOFA 高但关键生化较好”的情形做轻度下调
-
-    return 1 if score >= 0.5 else 0
-"""
-    tests = """TESTS = [
-    {"name": "predict_returns_int", "code": "assert predict_v0({}) in (0, 1)"},
-]
-"""
-    return core, tests
-
-
 def _load_heuristic_module(path: Path) -> dict:
     ns: dict = {}
     code = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -682,13 +470,13 @@ def run_heuristic_learning(
 
         topk = min(run_cfg.univariate_top_k, len(univariate_df))
         top_features = univariate_df.head(topk)["feature"].tolist()
-        report_features = _pick_report_features(feature_cols=feature_cols, top_features=top_features)
+        report_features = list(top_features)
         univariate_summary = univariate_df.head(topk)[
             ["rank", "feature", "feature_type", "method", "p_value", "missing_rate", "pointbiserial_r", "mwu_p", "binned_or_q4_rel_to_q1"]
         ].to_string(index=False)
     else:
         top_features = feature_cols
-        report_features = _pick_report_features(feature_cols=feature_cols, top_features=[])
+        report_features = list(feature_cols)
         univariate_summary = ""
 
     metric_desc = generate_metric_description(run_cfg.metric_priority)
@@ -722,137 +510,71 @@ def run_heuristic_learning(
         except Exception:
             knowledge_table = ""
 
-    existing_versions: set[str] = set()
-    if evolution_results_path.exists():
-        try:
-            for line in evolution_results_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                left, _, right = line.partition("\t")
-                v = left.strip()
-                if not v:
-                    continue
-                existing_versions.add(v)
-                try:
-                    m = ast.literal_eval(right.strip())
-                    if isinstance(m, dict):
-                        metrics = {str(k): float(vv) for k, vv in m.items()}
-                        records.append(IterationRecord(version=v, error_analysis="", metrics=metrics))
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
     if not heuristic_path.exists():
         if not run_cfg.run_v0_generation:
             raise RuntimeError("未找到 heuristic_system.py，且 run_v0_generation=False，无法继续。")
+        if client is None:
+            raise RuntimeError("llm_enabled=False 且 heuristic_system.py 不存在，无法生成 v0。")
+
+        prompt = get_rule_generation_prompt(
+            univariate_summary=univariate_summary,
+            knowledge_table=knowledge_table,
+            metric_desc=metric_desc,
+            task_description=run_cfg.task_description,
+        )
+        resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+        p = _parse_proposal(resp)
+        if p.version != "v0":
+            raise RuntimeError(f"v0 生成失败：version 不匹配，期望 v0，实际 {p.version}")
+        validate_python_syntax(p.new_policy_code)
+        fn_name = extract_function_name(p.new_policy_code)
+        if fn_name != "predict_v0":
+            raise RuntimeError(f"v0 生成失败：函数名不匹配，期望 predict_v0，实际 {fn_name}")
+
         header = "CURRENT_VERSION = 'v0'\n\n"
-        default_code, default_tests = _default_rule_v0_code(feature_cols=feature_cols)
-        v0_error_analysis = "default_v0"
-        v0_written = False
-        if client is not None:
-            prompt = get_rule_generation_prompt(
-                univariate_summary=univariate_summary,
-                knowledge_table=knowledge_table,
-                metric_desc=metric_desc,
-                task_description=run_cfg.task_description,
+        tests: list[dict] = []
+        if p.new_tests:
+            tests.extend([t for t in p.new_tests if isinstance(t, dict)])
+
+        lines = ["TESTS = ["]
+        for t in tests:
+            name = t.get("name", "")
+            code = t.get("code", "")
+            lines.append(
+                f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},"
             )
-            attempts = 0
-            while attempts < max(2, run_cfg.max_llm_attempts) and not v0_written:
-                attempts += 1
-                resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-                try:
-                    p = _parse_proposal(resp)
-                    if p.version != "v0":
-                        continue
-                    validate_python_syntax(p.new_policy_code)
-                    fn_name = extract_function_name(p.new_policy_code)
-                    if fn_name != "predict_v0":
-                        continue
+        lines.append("]")
+        tests_code = "\n".join(lines) + "\n"
 
-                    v0_error_analysis = p.error_analysis or v0_error_analysis
-
-                    tests: list[dict] = [{"name": "predict_returns_int", "code": "assert predict_v0({}) in (0, 1)"}]
-                    if p.new_tests:
-                        tests.extend([t for t in p.new_tests if isinstance(t, dict)])
-
-                    tmp_ns: dict = {}
-                    tmp_code = header + p.new_policy_code.strip() + "\n"
-                    exec(compile(tmp_code, "<v0>", "exec"), tmp_ns, tmp_ns)
-                    ok, msg = _run_assert_tests(tmp_ns, tests)
-                    if not ok:
-                        continue
-
-                    v0_fn = tmp_ns.get("predict_v0")
-                    if not callable(v0_fn):
-                        continue
-                    y_pred_train_v0 = _predict_with_function(v0_fn, train_df, label_col)
-                    ok, msg = _sanity_check_not_collapsed(y_pred_train_v0)
-                    if not ok:
-                        continue
-
-                    lines = ["TESTS = ["]
-                    for t in tests:
-                        name = t.get("name", "")
-                        code = t.get("code", "")
-                        lines.append(
-                            f"    {{'name': {json.dumps(name, ensure_ascii=False)}, 'code': {json.dumps(code, ensure_ascii=False)}}},"
-                        )
-                    lines.append("]")
-                    tests_code = "\n".join(lines) + "\n"
-
-                    write_text(
-                        heuristic_path,
-                        header + p.new_policy_code.strip() + "\n\n" + tests_code.strip() + "\n",
-                    )
-                    append_text(
-                        heuristic_path,
-                        f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n",
-                    )
-                    v0_written = True
-                except Exception:
-                    continue
-        if not v0_written:
-            write_text(heuristic_path, header + default_code.strip() + "\n\n" + default_tests.strip() + "\n")
-            append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
+        write_text(
+            heuristic_path,
+            header + p.new_policy_code.strip() + "\n\n" + tests_code.strip() + "\n",
+        )
+        v0_error_analysis = p.error_analysis or "v0"
+        append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
 
     ns = _load_heuristic_module(heuristic_path)
     fn_v0 = ns.get("predict_v0")
     if fn_v0 is None:
         raise RuntimeError("heuristic_system.py 中未找到 predict_v0")
 
-    def _parse_version_index(v: str) -> int:
-        if isinstance(v, str) and v.startswith("v") and v[1:].isdigit():
-            return int(v[1:])
-        return 0
+    current_version = "v0"
+    current_fn = fn_v0
+    current_idx = 0
 
-    cv = ns.get("CURRENT_VERSION")
-    current_version = cv if isinstance(cv, str) and cv.startswith("v") and cv[1:].isdigit() else "v0"
-    current_fn = ns.get(f"predict_{current_version}") or fn_v0
-    current_idx = _parse_version_index(current_version)
-
-    for v in sorted(existing_versions, key=_parse_version_index):
-        ea = ns.get(f"ERROR_ANALYSIS_predict_{v}")
-        if isinstance(ea, str) and ea.strip():
-            trajectory_lines.append(f"{v.upper()}: {ea.strip()}")
-
-    if "v0" not in existing_versions:
-        code_all = heuristic_path.read_text(encoding="utf-8")
-        y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
-        y_score_test_v0 = _predict_scores_from_code(code_all, "predict_v0", test_df, label_col)
-        if y_score_test_v0 is None:
-            y_score_test_v0 = y_pred_test_v0
-        metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_score_test_v0)
-        v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
-        records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
-        append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
-        trajectory_lines.append(f"V0: {v0_analysis}")
-        existing_versions.add("v0")
+    code_all = heuristic_path.read_text(encoding="utf-8")
+    y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
+    y_score_test_v0 = _predict_scores_from_code(code_all, "predict_v0", test_df, label_col)
+    if y_score_test_v0 is None:
+        y_score_test_v0 = y_pred_test_v0
+    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_score_test_v0)
+    v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
+    records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
+    append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
+    trajectory_lines.append(f"V0: {v0_analysis}")
 
     if run_cfg.run_iterations and client is not None:
-        start_i = current_idx + 1
-        end_i = current_idx + run_cfg.iterations
-        for i in range(start_i, end_i + 1):
+        for i in range(1, run_cfg.iterations + 1):
             next_version = f"v{i}"
             code_all = heuristic_path.read_text(encoding="utf-8")
             y_pred_train = _predict_with_function(current_fn, train_df, label_col)
@@ -965,76 +687,11 @@ def run_heuristic_learning(
                 new_err = int(np.sum(y_pred_new != y_true_train))
                 if np.isfinite(old_primary) and np.isfinite(new_primary):
                     if not (new_primary > old_primary + 1e-4 or (new_primary >= old_primary - 1e-6 and new_err < old_err)):
-                        fn_src = _extract_function_source(new_code, f"predict_{next_version}")
-                        base_sub = _extract_base_calibration_sub(fn_src) if fn_src is not None else None
-                        improved_code: str | None = None
-                        improved_train: dict[str, float] | None = None
-                        improved_err: int | None = None
-                        improved_sub: float | None = None
-
-                        if base_sub is not None:
-                            search = [
-                                round(x, 2)
-                                for x in np.arange(max(0.0, base_sub - 0.2), min(0.6, base_sub + 0.21), 0.05)
-                            ]
-                            best_key: tuple[float, int] | None = None
-                            for sub in search:
-                                patched_fn_src = _patch_base_calibration_sub(fn_src, new_sub=sub)
-                                if patched_fn_src is None:
-                                    continue
-                                patched_code = patched_fn_src
-                                tmp_ns2: dict = {}
-                                try:
-                                    exec(compile(current_code + "\n\n" + patched_code, "<heuristic>", "exec"), tmp_ns2, tmp_ns2)
-                                except Exception:
-                                    continue
-                                fn2 = tmp_ns2.get(f"predict_{next_version}")
-                                if not callable(fn2):
-                                    continue
-                                y_pred2 = _predict_with_function(fn2, train_df, label_col)
-                                degr2 = detect_degradation(y_true=y_true_train, y_pred_old=y_pred_old, y_pred_new=y_pred2)
-                                if len(degr2.degraded_indices) > allowed_degradation:
-                                    continue
-                                y_score2 = _predict_scores_from_code(
-                                    current_code + "\n\n" + patched_code, f"predict_{next_version}", train_df, label_col
-                                )
-                                if y_score2 is None:
-                                    y_score2 = y_pred2
-                                train2 = compute_metrics(y_true_train, y_pred2, y_score=y_score2)
-                                p2 = float(train2.get(primary, float("nan")))
-                                e2 = int(np.sum(y_pred2 != y_true_train))
-
-                                if np.isfinite(old_primary) and np.isfinite(p2):
-                                    ok_improve = p2 > old_primary + 1e-4 or (p2 >= old_primary - 1e-6 and e2 < old_err)
-                                    if not ok_improve:
-                                        continue
-
-                                key = (p2, -e2)
-                                if best_key is None or key > best_key:
-                                    best_key = key
-                                    improved_code = patched_code
-                                    improved_train = train2
-                                    improved_err = e2
-                                    improved_sub = sub
-
-                        if improved_code is None:
-                            degradation_warning = (
-                                f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
-                                f"errors {old_err}->{new_err}。请最小修改并改进。"
-                            )
-                            continue
-
-                        new_code = improved_code
-                        train_new = improved_train or train_new
-                        new_primary = float(train_new.get(primary, float("nan")))
-                        new_err = int(improved_err if improved_err is not None else new_err)
-                        proposal = ParsedProposal(
-                            version=proposal.version,
-                            error_analysis=(proposal.error_analysis + f"（自动校准：score -= {base_sub:.2f} -> {improved_sub:.2f}）"),
-                            new_policy_code=new_code,
-                            new_tests=proposal.new_tests,
-                            modified_tests=proposal.modified_tests,
+                        degradation_warning = (
+                            f"训练集指标/错误未改进：{primary} {old_primary:.6f}->{new_primary:.6f}，"
+                            f"errors {old_err}->{new_err}。请最小修改并改进。"
                         )
+                        continue
 
                 _append_new_version(
                     heuristic_path,
@@ -1062,7 +719,6 @@ def run_heuristic_learning(
                 m = compute_metrics(y_true_test, y_pred_test, y_score=y_score_test)
                 records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
                 append_text(evolution_results_path, f"{current_version}\t{m}\n")
-                existing_versions.add(current_version)
 
                 iteration_log.append(
                     {
