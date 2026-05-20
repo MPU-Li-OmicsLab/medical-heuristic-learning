@@ -1,5 +1,7 @@
 # HL Medical
 
+参考引用：[Learning Beyond Gradients](https://trinkle23897.github.io/learning-beyond-gradients/)
+
 [English README](./README.md)
 
 ## 项目简介
