@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import numpy as np
@@ -17,6 +18,13 @@ class UnivariateResult:
     p_value: float
     direction: str
     missing_rate: float
+    mean: float | None = None
+    std: float | None = None
+    median: float | None = None
+    min: float | None = None
+    max: float | None = None
+    n_unique: int | None = None
+    level_counts: str | None = None
     pointbiserial_r: float | None = None
     pointbiserial_p: float | None = None
     mwu_u: float | None = None
@@ -65,6 +73,24 @@ def _binned_odds_ratios_q4(x: pd.Series, y: pd.Series) -> str:
     return "; ".join(parts)
 
 
+def _level_counts_json(s: pd.Series, max_levels: int = 20) -> tuple[int, str]:
+    vc = s.dropna().value_counts()
+    n_unique = int(vc.size)
+    if n_unique == 0:
+        return 0, json.dumps({}, ensure_ascii=False)
+
+    if n_unique <= max_levels:
+        data = {str(k): int(v) for k, v in vc.items()}
+        return n_unique, json.dumps(data, ensure_ascii=False)
+
+    top = vc.iloc[:max_levels]
+    other = int(vc.iloc[max_levels:].sum())
+    data = {str(k): int(v) for k, v in top.items()}
+    if other > 0:
+        data["__OTHER__"] = other
+    return n_unique, json.dumps(data, ensure_ascii=False)
+
+
 def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame:
     y = train_df[label_col].astype(int)
     results: list[UnivariateResult] = []
@@ -82,6 +108,13 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
 
         if is_numeric and not is_binary:
             x = pd.to_numeric(s, errors="coerce")
+            x_valid = x.dropna()
+            mean = float(x_valid.mean()) if not x_valid.empty else float("nan")
+            std = float(x_valid.std(ddof=1)) if not x_valid.empty else float("nan")
+            median = float(x_valid.median()) if not x_valid.empty else float("nan")
+            x_min = float(x_valid.min()) if not x_valid.empty else float("nan")
+            x_max = float(x_valid.max()) if not x_valid.empty else float("nan")
+
             df = pd.DataFrame({"x": x, "y": y}).dropna()
             method = "pointbiserial"
             stat = float("nan")
@@ -130,6 +163,11 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                     mwu_u=mwu_u,
                     direction=direction,
                     missing_rate=missing_rate,
+                    mean=mean,
+                    std=std,
+                    median=median,
+                    min=x_min,
+                    max=x_max,
                     pointbiserial_r=r_val,
                     mwu_p=mwu_p,
                     binned_or_q4_rel_to_q1=binned_or,
@@ -144,6 +182,7 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
         direction = ""
         chi2_stat: float | None = None
         chi2_p: float | None = None
+        n_unique, level_counts = _level_counts_json(s)
 
         if not df.empty:
             try:
@@ -174,6 +213,8 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                 chi2_p=chi2_p,
                 direction=direction,
                 missing_rate=missing_rate,
+                n_unique=n_unique,
+                level_counts=level_counts,
             )
         )
 
