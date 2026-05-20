@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
 from hl.config import LLMConfig, RunConfig
 from hl.orchestrator import run_heuristic_learning
-
-
-def _default_output_dir() -> Path:
-    base = Path(__file__).resolve().parent / "out"
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return base / stamp
 
 
 def main() -> None:
@@ -41,8 +34,6 @@ def main() -> None:
     )
     if not_from_scratch and output_dir is None:
         raise RuntimeError("This run is not from scratch; please set output_dir to an existing output directory.")
-    if output_dir is None:
-        output_dir = _default_output_dir()
 
     run_cfg = RunConfig(
         output_dir=output_dir,

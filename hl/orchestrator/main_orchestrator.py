@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -40,7 +41,14 @@ def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str)
 def run_heuristic_learning(
     train_df: pd.DataFrame, test_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
 ) -> None:
-    ensure_dir(run_cfg.output_dir)
+    if run_cfg.output_dir is None:
+        base = Path.cwd() / "out"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = base / stamp
+    else:
+        out_dir = run_cfg.output_dir
+
+    ensure_dir(out_dir)
     train_df = train_df.reset_index(drop=True)
     test_df = test_df.reset_index(drop=True)
 
@@ -53,12 +61,12 @@ def run_heuristic_learning(
         raise ValueError("train_df and test_df must have the same set of feature columns.")
     feature_cols = train_cols
 
-    heuristic_path = run_cfg.output_dir / "heuristic_system.py"
-    evolution_results_path = run_cfg.output_dir / "evolution_results.txt"
-    iteration_log_path = run_cfg.output_dir / "iteration_log.json"
-    final_comparison_path = run_cfg.output_dir / "final_comparison.txt"
-    knowledge_path = run_cfg.output_dir / "probe_knowledge.md"
-    univariate_path = run_cfg.output_dir / "probe_univariate_results.csv"
+    heuristic_path = out_dir / "heuristic_system.py"
+    evolution_results_path = out_dir / "evolution_results.txt"
+    iteration_log_path = out_dir / "iteration_log.json"
+    final_comparison_path = out_dir / "final_comparison.txt"
+    knowledge_path = out_dir / "probe_knowledge.md"
+    univariate_path = out_dir / "probe_univariate_results.csv"
 
     metric_desc = generate_metric_description(run_cfg.metric_priority)
 
@@ -114,7 +122,7 @@ def run_heuristic_learning(
     last = records[-1]
     v0 = records[0]
 
-    _export_final_model(run_cfg.output_dir, heuristic_path, best.version)
+    _export_final_model(out_dir, heuristic_path, best.version)
 
     comparison = (
         f"METRIC_PRIORITY={run_cfg.metric_priority}\n"

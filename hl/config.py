@@ -14,7 +14,7 @@ class LLMConfig:
 
 @dataclass(frozen=True)
 class RunConfig:
-    output_dir: Path
+    output_dir: Path | None = None
     iterations: int = 10
     metric_priority: tuple[str, ...] = ("F1", "ACC")
     train_baselines: bool = False
