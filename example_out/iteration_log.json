@@ -1,0 +1,168 @@
+[
+  {
+    "version": "v1",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v1",
+    "last_regressed_indices": [
+      61,
+      63,
+      73,
+      77,
+      78,
+      223,
+      226,
+      227,
+      246,
+      265,
+      297,
+      298,
+      335,
+      336,
+      337,
+      357,
+      358,
+      403,
+      436,
+      437,
+      438,
+      440,
+      471
+    ]
+  },
+  {
+    "version": "v2",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v2",
+    "last_regressed_indices": []
+  },
+  {
+    "version": "v3",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v3",
+    "last_regressed_indices": [
+      307,
+      309,
+      310,
+      311,
+      332,
+      482
+    ]
+  },
+  {
+    "version": "v4",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v4",
+    "last_regressed_indices": [
+      154,
+      405,
+      441,
+      449
+    ]
+  },
+  {
+    "version": "v5",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v5",
+    "last_regressed_indices": [
+      332,
+      482
+    ]
+  },
+  {
+    "version": "v6",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v6",
+    "last_regressed_indices": [
+      441
+    ]
+  },
+  {
+    "version": "v7",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v7",
+    "last_regressed_indices": [
+      332,
+      482
+    ]
+  },
+  {
+    "version": "v8",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v8",
+    "last_regressed_indices": []
+  },
+  {
+    "version": "v9",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v9",
+    "last_regressed_indices": [
+      3,
+      59,
+      62,
+      77,
+      78,
+      135,
+      136,
+      137,
+      159,
+      172,
+      226,
+      227,
+      252,
+      307,
+      308,
+      309,
+      310,
+      311,
+      328,
+      332,
+      359,
+      360,
+      404,
+      447,
+      481,
+      482
+    ]
+  },
+  {
+    "version": "v10",
+    "accepted": true,
+    "attempt_logs": [],
+    "last_accepted_version": "v10",
+    "last_regressed_indices": [
+      9,
+      101,
+      149,
+      151,
+      152,
+      157,
+      167,
+      170,
+      174,
+      175,
+      191,
+      208,
+      209,
+      212,
+      213,
+      231,
+      251,
+      256,
+      267,
+      330,
+      354,
+      390,
+      397,
+      470
+    ]
+  }
+]

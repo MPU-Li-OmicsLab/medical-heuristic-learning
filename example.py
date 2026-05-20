@@ -17,6 +17,7 @@ def main() -> None:
 
     # Complete steps
     run_cfg = RunConfig(
+        output_dir = Path("./example_out"),
         run_univariate_probe = True,
         run_knowledge_probe = True,
         run_v0_generation = True,
