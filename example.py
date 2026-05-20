@@ -16,23 +16,25 @@ def main() -> None:
     test_df = data.iloc[500:1000].copy()
 
     # Complete steps
-    run_univariate_probe = True
-    run_knowledge_probe = True
-    run_v0_generation = True
-    run_iterations = True
-
     run_cfg = RunConfig(
-        run_univariate_probe=run_univariate_probe,
-        run_knowledge_probe=run_knowledge_probe,
-        run_v0_generation=run_v0_generation,
-        run_iterations=run_iterations,
+        run_univariate_probe = True,
+        run_knowledge_probe = True,
+        run_v0_generation = True,
+        run_iterations = True,
         task_description=(
             "Binary classification on a clinical tabular dataset. "
             f"Predict {label_col} (in-hospital mortality flag) from the provided features. "
             "Optimize metrics by the configured metric priority."
         ),
     )
-    llm_cfg = LLMConfig()
+
+    # LLM config
+    llm_cfg = LLMConfig(base_url = "https://api.deepseek.com/v1", 
+        api_key_env = "DEEPSEEK_API_KEY",
+        # Set this environment variable in your shell before running the script:
+        # export DEEPSEEK_API_KEY=sk-xxxxxx 
+        model_name = "deepseek-v4-pro", 
+        temperature = 0.3)
     run_heuristic_learning(train_df=train_df, test_df=test_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
 
 
