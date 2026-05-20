@@ -16,7 +16,7 @@ HL Medical 是一个面向临床表格数据的轻量级启发式学习框架。
 4. 基于训练错误样本和回归退化反馈，迭代更新规则系统。
 5. 导出最佳规则版本，作为最终预测入口。
 
-仓库当前提供了一个医学表格示例 `example.py`，主要编排入口是 `run_heuristic_learning(...)`。
+仓库当前提供了一个医学表格训练示例 `example_training.py`，主要编排入口是 `run_heuristic_learning(...)`。
 
 ## 安装
 
@@ -68,8 +68,14 @@ run_heuristic_learning(
 
 ```bash
 export DEEPSEEK_API_KEY="your-api-key"
-uv run python example.py
+uv run python example_training.py
 ```
+
+## 示例文件
+
+- `example_training.py`：使用 `./data/YHD_bicarbonate.csv` 运行完整训练流程，并将生成产物写入 `./example_out`。
+- `example_inference.py`：从 `./example_out/final_heuristic_model.py` 加载已训练模型，读取 `./data/YHD_bicarbonate.csv` 的最后 5 行，并输出预测结果。
+- `example_out`：训练脚本生成的示例输出目录，包含 `heuristic_system.py`、`final_heuristic_model.py` 等文件。
 
 ## API 文档
 

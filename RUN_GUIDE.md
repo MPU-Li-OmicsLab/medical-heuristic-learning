@@ -24,18 +24,18 @@ uv sync
 
 ```bash
 export DEEPSEEK_API_KEY="你的key"
-uv run python example.py
+uv run python example_training.py
 ```
 
 说明：
 
-- `example.py` 当前的数据划分为：
+- `example_training.py` 当前的数据划分为：
   - 训练集：`data.iloc[:500]`
   - 测试集：`data.iloc[500:1000]`
 - 若不配置输出目录，默认输出到 `./out/<时间戳>/`（在 `/data/yk/HL/out/<时间戳>/`）。
-- 输出目录与运行模式（从头跑 / 只迭代）在 `example.py` 中通过直接赋值配置。
+- 输出目录与运行模式（从头跑 / 只迭代）在 `example_training.py` 中通过直接赋值配置。
 
-如果你要复用已有输出目录（不从头跑），请在 `example.py` 里把 `mode` 改为 `iterate_only` 并把 `output_dir` 指向已有输出目录。
+如果你要复用已有输出目录（不从头跑），请在 `example_training.py` 里把 `mode` 改为 `iterate_only` 并把 `output_dir` 指向已有输出目录。
 
 ## 3. 输出文件说明（在 output_dir 下）
 
@@ -58,7 +58,7 @@ uv run python example.py
 - v0 生成：跑（`run_v0_generation=True`）
 - 迭代：跑（`run_iterations=True`）
 
-你可以在 `example.py` 中改为显式配置，例如：
+你可以在 `example_training.py` 中改为显式配置，例如：
 
 ```python
 from hl.config import RunConfig
@@ -123,12 +123,12 @@ run_cfg = RunConfig(
 建议每次实验使用不同输出目录，避免混淆：
 
 ```bash
-uv run python example.py
+uv run python example_training.py
 ```
 
 注意：
 
-- 只有当你在 `example.py` 里把 `output_dir` 指向“已有输出目录”时，才可能复用之前的探针/版本并继续迭代。
+- 只有当你在 `example_training.py` 里把 `output_dir` 指向“已有输出目录”时，才可能复用之前的探针/版本并继续迭代。
 - 如果你不是从头跑（例如只迭代），但 `output_dir` 没有指向已有输出目录，会直接报错，避免误创建新时间戳目录导致“无法获取之前的部分”。
 
 ## 6. DeepSeek 模型选择（LLMConfig）
@@ -138,7 +138,7 @@ uv run python example.py
 - `base_url`：`https://api.deepseek.com/v1`（OpenAI 兼容接口路径前缀）
 - `model_name`：例如 `deepseek-v4-pro`
 
-如果你想临时改模型，最直接方式是在 `example.py` 里：
+如果你想临时改模型，最直接方式是在 `example_training.py` 里：
 
 ```python
 from hl.config import LLMConfig
