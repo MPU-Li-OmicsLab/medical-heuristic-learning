@@ -1,0 +1,187 @@
+# HL Medical
+
+[中文文档](./README-CN.md)
+
+## Overview
+
+HL Medical is a lightweight framework for heuristic learning on clinical tabular data.
+Instead of training a neural network as the main artifact, the project uses statistical probes,
+LLM-assisted knowledge extraction, and iterative rule editing to build a Python-based heuristic system
+for binary classification tasks such as in-hospital mortality prediction.
+
+The default workflow is:
+
+1. Run a univariate statistical probe on the training data.
+2. Optionally query an LLM for medical prior knowledge about the features.
+3. Generate an initial rule function `predict_v0`.
+4. Iteratively refine the rule system using training errors and regression feedback.
+5. Export the best rule version as a final prediction entrypoint.
+
+This repository currently ships with a medical tabular example in `example.py`, and the main orchestration entrypoint is `run_heuristic_learning(...)`.
+
+## Installation
+
+Requirements:
+
+- Python `>=3.11`
+- Recommended package manager: `uv`
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Runtime dependencies include:
+
+- `numpy`
+- `openai`
+- `pandas`
+- `scipy`
+
+Development dependencies include:
+
+- `scikit-learn`
+
+## Quick Start
+
+Example run:
+
+```python
+from hl.config import LLMConfig, RunConfig
+from hl.orchestrator import run_heuristic_learning
+
+run_cfg = RunConfig()
+llm_cfg = LLMConfig(
+    api_key="your-api-key",  # optional; if omitted, falls back to api_key_env
+)
+
+run_heuristic_learning(
+    train_df=train_df,
+    test_df=test_df,
+    label_col="hospital_expire_flag",
+    run_cfg=run_cfg,
+    llm_cfg=llm_cfg,
+)
+```
+
+You can also use an environment variable instead of passing the key directly:
+
+```bash
+export DEEPSEEK_API_KEY="your-api-key"
+uv run python example.py
+```
+
+## API Reference
+
+### `LLMConfig`
+
+Configuration for the LLM backend.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `base_url` | `str` | `"https://api.deepseek.com/v1"` | Base URL for an OpenAI-compatible API service. |
+| `api_key` | `str | None` | `None` | Directly provided API key. If this is not `None` and not empty, it takes priority over environment lookup. |
+| `api_key_env` | `str` | `"DEEPSEEK_API_KEY"` | Name of the environment variable used when `api_key` is not provided. |
+| `model_name` | `str` | `"deepseek-v4-pro"` | Model name passed to the OpenAI-compatible chat completion API. |
+| `temperature` | `float` | `0.3` | Sampling temperature for LLM responses. |
+
+Key resolution behavior:
+
+- If `api_key` is provided, the framework uses it directly.
+- Otherwise, it reads the key from the environment variable named by `api_key_env`.
+- If neither source provides a key and LLM is enabled, initialization raises an error.
+
+### `RunConfig`
+
+Runtime configuration for the heuristic learning pipeline.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `output_dir` | `Path | None` | `None` | Output directory for all artifacts. When `None`, the framework automatically creates `./out/<timestamp>/` from the current working directory. |
+| `iterations` | `int` | `10` | Maximum number of iterative rule refinement rounds. |
+| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC")` | Ordered metric priority used to select the best final version. |
+| `train_baselines` | `bool` | `False` | Reserved switch for baseline model training. The current main orchestration path does not actively use it. |
+| `run_univariate_probe` | `bool` | `True` | Whether to run the univariate statistical probe. |
+| `run_knowledge_probe` | `bool` | `True` | Whether to run the LLM-based medical knowledge probe. |
+| `run_v0_generation` | `bool` | `True` | Whether to generate the initial heuristic rule `predict_v0` if no heuristic file exists. |
+| `run_iterations` | `bool` | `True` | Whether to run iterative refinement after `v0`. |
+| `max_error_samples` | `int` | `100` | Maximum number of misclassified training samples included in each iteration prompt. |
+| `max_error_details` | `int` | `40` | Maximum number of detailed error examples formatted into the prompt. |
+| `degradation_threshold` | `int` | `10` | Reserved degradation-related threshold. Present in config but not currently enforced in the main orchestration logic. |
+| `degradation_rate` | `float` | `0.05` | Reserved degradation-related rate. Present in config but not currently enforced in the main orchestration logic. |
+| `degradation_max_examples` | `int` | `30` | Maximum number of regression examples included after a degradation check. |
+| `max_llm_attempts` | `int` | `4` | Maximum number of LLM retries per iteration when parsing or validation fails. |
+| `task_description` | `str` | `""` | Free-form natural language description of the task, passed into prompts. |
+| `enable_auto_patch` | `bool` | `False` | Reserved switch for future automatic patch flows. |
+| `max_specificity_drop` | `float` | `1.0` | Reserved constraint field for future acceptance policies. |
+| `max_acc_drop` | `float` | `1.0` | Reserved constraint field for future acceptance policies. |
+| `univariate_top_k` | `int` | `30` | Number of top-ranked univariate features summarized into prompts and reports. |
+| `knowledge_top_k` | `int` | `20` | Reserved knowledge-related field; currently not enforced directly in the orchestration entrypoint. |
+| `random_seed` | `int` | `42` | Random seed used for sampling error and degradation examples. |
+| `llm_enabled` | `bool` | `True` | Whether to initialize the LLM client and run LLM-dependent steps. |
+
+### `run_heuristic_learning`
+
+Signature:
+
+```python
+def run_heuristic_learning(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    label_col: str,
+    run_cfg: RunConfig,
+    llm_cfg: LLMConfig,
+) -> None:
+```
+
+Parameters:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `train_df` | `pd.DataFrame` | Training dataset containing both features and the label column. |
+| `test_df` | `pd.DataFrame` | Test dataset containing the same feature columns and the label column. |
+| `label_col` | `str` | Name of the target column present in both dataframes. |
+| `run_cfg` | `RunConfig` | Runtime pipeline configuration. |
+| `llm_cfg` | `LLMConfig` | LLM backend configuration. |
+
+Behavior:
+
+- Resets dataframe indices.
+- Validates that `label_col` exists in both datasets.
+- Validates that `train_df` and `test_df` share the same feature set.
+- Resolves `output_dir`, creating `./out/<timestamp>/` automatically when needed.
+- Runs the univariate probe and knowledge probe.
+- Generates `heuristic_system.py` with an initial `predict_v0` if needed.
+- Runs iterative heuristic updates and evaluation.
+- Writes logs and summary artifacts.
+- Selects the best record using `metric_priority`.
+- Exports `final_heuristic_model.py` with a unified `predict(features) -> int` entrypoint.
+
+Return value:
+
+- Returns `None`.
+- Writes all artifacts to the resolved output directory.
+
+Possible errors:
+
+- Raises `ValueError` if `label_col` is missing or if train and test feature columns do not match.
+- Raises `RuntimeError` if no version record is produced, or if LLM-dependent steps are requested without a valid API key.
+
+## Output Files
+
+The pipeline may generate the following files inside the resolved `output_dir`:
+
+- `probe_univariate_results.csv`
+- `probe_knowledge.md`
+- `heuristic_system.py`
+- `evolution_results.txt`
+- `iteration_log.json`
+- `final_heuristic_model.py`
+- `final_comparison.txt`
+
+## Notes
+
+- If `output_dir` is `None`, a timestamped directory is created under `./out/`.
+- If you want to continue from an existing experiment, pass an explicit `output_dir`.
+- If `llm_enabled=False`, LLM-dependent steps cannot generate new rules unless required artifacts already exist.
