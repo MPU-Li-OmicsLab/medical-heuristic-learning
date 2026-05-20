@@ -1,14 +1,18 @@
 [project]
 name = "hl-medical"
 version = "0.1.0"
-description = "Add your description here"
+description = "Medical Heuristic Learning"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.4.5",
     "openai>=2.37.0",
     "pandas>=3.0.3",
-    "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
+]
+
+[dependency-groups]
+dev = [
+    "scikit-learn>=1.8.0",
 ]
 
 [tool.uv]
