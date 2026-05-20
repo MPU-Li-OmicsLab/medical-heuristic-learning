@@ -49,3 +49,4 @@ def generate_metric_description(metric_priority: list[str] | tuple[str, ...]) ->
         f"This optimization prioritizes {metrics[0]} first, then {metrics[1]}. "
         "Focus on balancing false negatives and false positives."
     )
+

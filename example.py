@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from config import LLMConfig, RunConfig
-from run import run_heuristic_learning
+from hl.config import LLMConfig, RunConfig
+from hl.orchestrator import run_heuristic_learning
 
 
 def _default_output_dir() -> Path:
@@ -23,35 +22,27 @@ def main() -> None:
     train_df = data.iloc[:500].copy()
     test_df = data.iloc[500:1000].copy()
 
-    mode = (os.getenv("HL_MODE", "scratch") or "scratch").strip().lower()
+    mode = "scratch"
+    output_dir: Path | None = None
 
     run_univariate_probe = True
     run_knowledge_probe = True
     run_v0_generation = True
     run_iterations = True
 
-    if mode in {"iterate_only", "iter", "iterate"}:
+    if mode == "iterate_only":
         run_univariate_probe = False
         run_knowledge_probe = False
         run_v0_generation = False
         run_iterations = True
 
-    not_from_scratch = (
-        mode not in {"scratch", "from_scratch"}
-        or (not run_univariate_probe)
-        or (not run_knowledge_probe)
-        or (not run_v0_generation)
-        or (not run_iterations)
+    not_from_scratch = mode != "scratch" or not (
+        run_univariate_probe and run_knowledge_probe and run_v0_generation and run_iterations
     )
-
-    output_dir_env = (os.getenv("HL_OUTPUT_DIR", "") or "").strip()
-    if not_from_scratch and not output_dir_env:
-        raise RuntimeError(
-            "This run is not from scratch, but HL_OUTPUT_DIR is not set. "
-            "Set HL_OUTPUT_DIR to an existing output directory to reuse previous artifacts."
-        )
-
-    output_dir = Path(output_dir_env) if output_dir_env else _default_output_dir()
+    if not_from_scratch and output_dir is None:
+        raise RuntimeError("This run is not from scratch; please set output_dir to an existing output directory.")
+    if output_dir is None:
+        output_dir = _default_output_dir()
 
     run_cfg = RunConfig(
         output_dir=output_dir,

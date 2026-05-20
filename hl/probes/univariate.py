@@ -18,7 +18,11 @@ class UnivariateResult:
     direction: str
     missing_rate: float
     pointbiserial_r: float | None = None
+    pointbiserial_p: float | None = None
+    mwu_u: float | None = None
     mwu_p: float | None = None
+    chi2_stat: float | None = None
+    chi2_p: float | None = None
     binned_or_q4_rel_to_q1: str | None = None
 
 
@@ -84,12 +88,15 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
             p = float("nan")
             direction = ""
             r_val: float | None = None
+            p_r_val: float | None = None
             mwu_p: float | None = None
+            mwu_u: float | None = None
 
             if not df.empty:
                 try:
                     r, p_r = pointbiserialr(df["y"].to_numpy(), df["x"].to_numpy())
                     r_val = float(r)
+                    p_r_val = float(p_r)
                     stat = float(r)
                     p = float(p_r)
                     direction = "pos" if r_val >= 0 else "neg"
@@ -100,12 +107,13 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                     x1 = df.loc[df["y"] == 1, "x"].to_numpy()
                     x0 = df.loc[df["y"] == 0, "x"].to_numpy()
                     if len(x1) > 0 and len(x0) > 0:
-                        _, p_u = mannwhitneyu(x1, x0, alternative="two-sided")
+                        u, p_u = mannwhitneyu(x1, x0, alternative="two-sided")
+                        mwu_u = float(u)
                         mwu_p = float(p_u)
                         if np.isnan(p) or mwu_p < p:
                             method = "mwu"
                             p = mwu_p
-                            stat = float("nan")
+                            stat = mwu_u if mwu_u is not None else float("nan")
                 except Exception:
                     pass
 
@@ -118,6 +126,8 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                     method=method,
                     statistic=stat,
                     p_value=p,
+                    pointbiserial_p=p_r_val,
+                    mwu_u=mwu_u,
                     direction=direction,
                     missing_rate=missing_rate,
                     pointbiserial_r=r_val,
@@ -132,6 +142,8 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
         stat = float("nan")
         p = float("nan")
         direction = ""
+        chi2_stat: float | None = None
+        chi2_p: float | None = None
 
         if not df.empty:
             try:
@@ -140,9 +152,13 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                     chi2, p_chi2, _, _ = chi2_contingency(ctab)
                     stat = float(chi2)
                     p = float(p_chi2)
+                    chi2_stat = stat
+                    chi2_p = p
                 elif ctab.shape[0] == 1 and ctab.shape[1] == 2:
                     stat = 0.0
                     p = 1.0
+                    chi2_stat = stat
+                    chi2_p = p
             except Exception:
                 pass
 
@@ -154,6 +170,8 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                 method=method,
                 statistic=stat,
                 p_value=p,
+                chi2_stat=chi2_stat,
+                chi2_p=chi2_p,
                 direction=direction,
                 missing_rate=missing_rate,
             )
@@ -163,4 +181,3 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
     out_df = out_df.sort_values(by=["p_value", "missing_rate"], ascending=[True, True], na_position="last")
     out_df.insert(0, "rank", range(1, len(out_df) + 1))
     return out_df
-

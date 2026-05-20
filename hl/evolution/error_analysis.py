@@ -69,3 +69,4 @@ def format_error_report(samples: list[ErrorSample], max_details: int = 40) -> st
         lines.append("")
         lines.append(f"(Showing only the first {len(shown)} samples; the rest are omitted.)")
     return "\n".join(lines)
+

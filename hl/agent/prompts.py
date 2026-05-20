@@ -39,7 +39,7 @@ def get_rule_generation_prompt(
         "- new_policy_code: full Python function definition; function name MUST be predict_v0\n"
         "Function signature MUST be: def predict_v0(features: dict) -> int:\n"
         "Return an integer class label. For binary tasks, return 0/1 matching the dataset label.\n"
-        # "Do NOT hardcode assumptions like score starting at 0.5 or a fixed decision threshold of 0.5.\n"
+        "Do NOT hardcode assumptions like score starting at 0.5 or a fixed decision threshold of 0.5.\n"
         "You may implement a score-based rule, a direct rule-based decision tree, or any deterministic rule set, as long as it is a pure-Python function.\n"
         "Each if/elif/else branch MUST include an English comment briefly explaining the medical rationale or design intent.\n"
         "The rule must be self-contained and use ONLY the Python standard library (no third-party packages).\n"
@@ -86,3 +86,4 @@ def get_iteration_prompt(
         "Keep changes minimal and comments clear.\n"
         "The rule must be self-contained and use ONLY the Python standard library (no third-party packages).\n"
     )
+

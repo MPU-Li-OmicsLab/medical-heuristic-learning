@@ -1,7 +1,7 @@
 def main():
-    from run import main as run_main
+    from example import main as example_main
 
-    run_main()
+    example_main()
 
 
 if __name__ == "__main__":

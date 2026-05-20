@@ -36,3 +36,4 @@ class RunConfig:
     knowledge_top_k: int = 20
     random_seed: int = 42
     llm_enabled: bool = True
+
