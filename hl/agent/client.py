@@ -19,12 +19,13 @@ class LLMClient:
         api_key_env: str,
         model_name: str,
         temperature: float = 0.3,
+        api_key: str | None = None,
     ) -> None:
-        api_key = os.getenv(api_key_env, "")
-        if not api_key:
-            raise RuntimeError(f"Environment variable {api_key_env} is not set; cannot call the LLM.")
+        actual_api_key = api_key or os.getenv(api_key_env, "")
+        if not actual_api_key:
+            raise RuntimeError(f"API key not provided and environment variable {api_key_env} is not set; cannot call the LLM.")
 
-        self._client = OpenAI(base_url=base_url, api_key=api_key)
+        self._client = OpenAI(base_url=base_url, api_key=actual_api_key)
         self._model = model_name
         self._temperature = temperature
 

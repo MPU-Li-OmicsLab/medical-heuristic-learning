@@ -7,6 +7,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class LLMConfig:
     base_url: str = "https://api.deepseek.com/v1"
+    api_key: str | None = None
     api_key_env: str = "DEEPSEEK_API_KEY"
     model_name: str = "deepseek-v4-pro"
     temperature: float = 0.3

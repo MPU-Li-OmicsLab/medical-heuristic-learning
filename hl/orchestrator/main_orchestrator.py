@@ -77,6 +77,7 @@ def run_heuristic_learning(
             api_key_env=llm_cfg.api_key_env,
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
+            api_key=llm_cfg.api_key,
         )
 
     _top_features, report_features, univariate_summary = run_univariate_probe_task(
