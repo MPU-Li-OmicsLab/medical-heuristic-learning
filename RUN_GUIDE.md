@@ -42,7 +42,7 @@ uv run python example_training.py
 - `probe_univariate_results.csv`：单变量统计探针结果（特征相关性/显著性/缺失率等）
 - `probe_knowledge.md`：医学知识探针输出（LLM 生成的阈值与解释，若启用）
 - `heuristic_system.py`：规则系统源码（包含 `predict_v0/predict_v1/...`）
-- `evolution_results.txt`：每个版本在测试集上的指标（ACC/F1/AUC/Sensitivity/Specificity）
+- `evolution_results.txt`：每个版本在测试集上的指标（ACC/F1/Sensitivity/Specificity）
 - `iteration_log.json`：每轮迭代详细日志（错误样本、退化检测、提案与验收原因）
 - `final_heuristic_model.py`：最终导出的统一入口 `predict(features)->int`
 - `final_comparison.txt`：V0、FINAL、LAST 的对比汇总

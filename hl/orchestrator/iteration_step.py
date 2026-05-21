@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -44,68 +43,6 @@ def _predict_with_function(fn: Callable[[dict], int], df: pd.DataFrame, label_co
         p = fn(feats)
         preds.append(int(p))
     return np.asarray(preds, dtype=int)
-
-
-def _extract_function_source(code: str, fn_name: str) -> str | None:
-    try:
-        mod = ast.parse(code)
-    except Exception:
-        return None
-    for node in mod.body:
-        if isinstance(node, ast.FunctionDef) and node.name == fn_name:
-            return ast.get_source_segment(code, node)
-    return None
-
-
-def _build_score_function(fn_source: str, score_var_name: str = "score") -> str:
-    module = ast.parse(fn_source)
-    if not module.body or not isinstance(module.body[0], ast.FunctionDef):
-        raise ValueError("Not a function definition")
-    fn_def: ast.FunctionDef = module.body[0]
-
-    class ReturnToScore(ast.NodeTransformer):
-        def visit_Return(self, node: ast.Return) -> ast.AST:
-            return ast.Return(value=ast.Name(id=score_var_name, ctx=ast.Load()))
-
-    fn_def = ReturnToScore().visit(fn_def)  # type: ignore[assignment]
-    ast.fix_missing_locations(fn_def)
-    module.body[0] = fn_def
-    return ast.unparse(module)
-
-
-def _predict_scores_from_code(code_all: str, fn_name: str, df: pd.DataFrame, label_col: str) -> np.ndarray | None:
-    fn_source = _extract_function_source(code_all, fn_name)
-    if not fn_source:
-        return None
-    try:
-        score_code = _build_score_function(fn_source)
-    except Exception:
-        return None
-
-    ns: dict = {}
-    try:
-        exec(compile(score_code, "<score_fn>", "exec"), ns, ns)
-    except Exception:
-        return None
-    score_fn = ns.get(fn_name)
-    if score_fn is None:
-        return None
-
-    feature_cols = [c for c in df.columns if c != label_col]
-    scores: list[float] = []
-    ok = 0
-    for _, row in df.iterrows():
-        feats = {c: row[c] for c in feature_cols}
-        try:
-            s = float(score_fn(feats))
-            if np.isfinite(s):
-                ok += 1
-            scores.append(s)
-        except Exception:
-            scores.append(float("nan"))
-    if ok == 0:
-        return None
-    return np.asarray(scores, dtype=float)
 
 
 def _load_heuristic_module(path: Path) -> dict:
@@ -154,10 +91,8 @@ def run_iterations_task(
     last_regressed_indices: list[int] = []
     last_regressed_examples: list[dict] = []
 
-    code_all = heuristic_path.read_text(encoding="utf-8")
     y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
-    y_score_test_v0 = _predict_scores_from_code(code_all, "predict_v0", test_df, label_col)
-    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0, y_score=y_score_test_v0)
+    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0)
     v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
     records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
     append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
@@ -244,10 +179,8 @@ def run_iterations_task(
             trajectory_lines.append(f"{next_version}: {proposal.error_analysis}")
             accepted = True
 
-            code_all = heuristic_path.read_text(encoding="utf-8")
             y_pred_test = _predict_with_function(current_fn, test_df, label_col)
-            y_score_test = _predict_scores_from_code(code_all, f"predict_{current_version}", test_df, label_col)
-            m = compute_metrics(y_true_test, y_pred_test, y_score=y_score_test)
+            m = compute_metrics(y_true_test, y_pred_test)
             records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
             append_text(evolution_results_path, f"{current_version}\t{m}\n")
 
@@ -280,4 +213,3 @@ def run_iterations_task(
             break
 
     return records, iteration_log
-
