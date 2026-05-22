@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import secrets
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -16,10 +17,18 @@ def _load_run_ablation_module():
     mod_path = Path(__file__).resolve().parent / "run_ablation.py"
     if not mod_path.exists():
         raise FileNotFoundError(f"run_ablation.py not found at {mod_path}")
-    spec = importlib.util.spec_from_file_location("ablation_run_ablation", mod_path)
+
+    name = "ablation_run_ablation"
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+
+    spec = importlib.util.spec_from_file_location(name, mod_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load run_ablation module")
+
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 

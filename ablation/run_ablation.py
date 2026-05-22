@@ -265,6 +265,39 @@ def _run_one_safe(
         }
 
 
+def run_all(
+    *,
+    base_output_dir: Path,
+    seed: int,
+    workers: int,
+    dataset: str | None = None,
+    ablation: str | None = None,
+    train_size: int | None = None,
+) -> None:
+    argv = [
+        "run_ablation.py",
+        "--workers",
+        str(int(workers)),
+        "--seed",
+        str(int(seed)),
+        "--output-root",
+        str(base_output_dir),
+    ]
+    if dataset is not None:
+        argv += ["--dataset", str(dataset)]
+    if ablation is not None:
+        argv += ["--ablation", str(ablation)]
+    if train_size is not None:
+        argv += ["--train-size", str(int(train_size))]
+
+    old_argv = sys.argv
+    try:
+        sys.argv = argv
+        main()
+    finally:
+        sys.argv = old_argv
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=1)
