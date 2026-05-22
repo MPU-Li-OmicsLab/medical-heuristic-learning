@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import secrets
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -13,19 +12,25 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _load_run_ablation_module():
+    mod_path = Path(__file__).resolve().parent / "run_ablation.py"
+    if not mod_path.exists():
+        raise FileNotFoundError(f"run_ablation.py not found at {mod_path}")
+    spec = importlib.util.spec_from_file_location("ablation_run_ablation", mod_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Failed to load run_ablation module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _run_one_batch(*, output_root: Path, seed: int, workers: int) -> None:
     output_root.mkdir(parents=True, exist_ok=False)
-    cmd = [
-        sys.executable,
-        str(Path(__file__).resolve().parent / "run_ablation.py"),
-        "--workers",
-        str(int(workers)),
-        "--seed",
-        str(int(seed)),
-        "--output-root",
-        str(output_root),
-    ]
-    subprocess.run(cmd, check=True)
+    run_ablation = _load_run_ablation_module()
+    run_all = getattr(run_ablation, "run_all", None)
+    if run_all is None:
+        raise RuntimeError("run_all(...) not found in run_ablation.py")
+    run_all(base_output_dir=output_root, seed=int(seed), workers=int(workers))
 
 
 def main() -> None:

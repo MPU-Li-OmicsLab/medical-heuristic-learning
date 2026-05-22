@@ -414,6 +414,26 @@ def main() -> None:
             }
         )
 
+    dataset_order = {"UKB": 0, "YHD": 1}
+    uk_order = {("0", "0"): 0, ("0", "1"): 1, ("1", "0"): 2, ("1", "1"): 3}
+    train_order = {10: 0, 100: 1, 1000: 2, 3000: 3}
+
+    def _row_key(row: dict) -> tuple:
+        ds = str(row.get("数据集", ""))
+        u = str(row.get("U", ""))
+        k = str(row.get("K", ""))
+        try:
+            ts = int(str(row.get("训练集规模", "")))
+        except Exception:
+            ts = -1
+        return (
+            dataset_order.get(ds, 99),
+            uk_order.get((u, k), 99),
+            train_order.get(ts, 99),
+        )
+
+    rows.sort(key=_row_key)
+
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
