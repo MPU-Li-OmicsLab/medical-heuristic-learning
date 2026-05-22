@@ -47,6 +47,7 @@ uv run python ablation/run_ablation.py --workers 1
 
 - 如果你用的是 `python ablation/run_ablation.py` 这种“按文件路径运行”的方式，Python 默认只把 `ablation/` 作为导入根路径，可能会找不到仓库根目录下的 `hl/` 包。本脚本已在运行时自动把仓库根目录加入 `sys.path`，因此可以直接按上述命令运行。
 - 并行运行示例（多进程）：`--workers 8` 或 `--workers 16`（并发过大可能触发 API 限流/失败重试）。
+- 也可以用批次脚本循环跑多次（每次随机生成一个 seed，并保证同一批次 32 个实验共用同一个 seed）：`uv run python ablation/run_batches.py --runs 10 --workers 8`
 
 ## 输出结构
 
@@ -75,3 +76,10 @@ uv run python ablation/run_ablation.py --workers 1
 - `heldout_test_summary.txt`：同上，便于快速查看
 
 另外会在 `ablation/outputs/` 下生成一个索引文件 `index_<TIMESTAMP>.json`，记录每组实验输出目录路径。
+
+## 输出文件（单批次）
+
+当你指定 `--output-root <dir>` 时，`<dir>` 下会写出两个汇总文件：
+
+- `index.json`：包含本批次 seed、workers、created_at、以及 32 个实验的结果列表（包含 ok/error、traceback 等）
+- `ablation.csv`：把 32 个实验的 held-out test 最终指标汇总成一张表，列包含：数据集、U、K、训练集规模、ACC、F1、Sensitivity、Specificity、保留的是第几次迭代的结果（final_version）

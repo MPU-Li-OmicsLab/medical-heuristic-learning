@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.util
 import json
 import os
@@ -267,10 +268,15 @@ def _run_one_safe(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-root", type=str, default="./ablation/outputs")
+    parser.add_argument("--dataset", choices=["YHD", "UKB"], default=None)
+    parser.add_argument("--ablation", choices=["U1_K1", "U1_K0", "U0_K1", "U0_K0"], default=None)
+    parser.add_argument("--train-size", type=int, choices=[3000, 1000, 100, 10], default=None)
     args = parser.parse_args()
 
-    base_output_dir = Path("./ablation/outputs")
-    seed = 42
+    base_output_dir = Path(args.output_root)
+    seed = int(args.seed)
     split_spec = SplitSpec(val_total=1000, test_total=1000)
 
     datasets = [
@@ -287,8 +293,15 @@ def main() -> None:
 
     tasks: list[tuple] = []
     for dataset_name, csv_path, label_col in datasets:
+        if args.dataset is not None and dataset_name != args.dataset:
+            continue
         for run_univariate_probe, run_knowledge_probe in ablations:
+            ablation_name = f"U{int(run_univariate_probe)}_K{int(run_knowledge_probe)}"
+            if args.ablation is not None and ablation_name != args.ablation:
+                continue
             for train_size in train_sizes:
+                if args.train_size is not None and train_size != args.train_size:
+                    continue
                 tasks.append(
                     (
                         dataset_name,
@@ -302,6 +315,9 @@ def main() -> None:
                         base_output_dir,
                     )
                 )
+
+    if not tasks:
+        raise RuntimeError("No tasks matched the given filters.")
 
     workers = int(args.workers)
     if workers <= 1:
@@ -326,9 +342,99 @@ def main() -> None:
                         flush=True,
                     )
 
-    index_path = base_output_dir / f"index_{_timestamp()}.json"
-    write_json(index_path, results)
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+
+    index_path = base_output_dir / "index.json"
+    index_payload = {
+        "seed": seed,
+        "workers": workers,
+        "created_at": _timestamp(),
+        "results": results,
+    }
+    write_json(index_path, index_payload)
     print(f"[ablation] index_written={index_path}", flush=True)
+
+    csv_path = base_output_dir / "ablation.csv"
+    rows: list[dict] = []
+    for r in results:
+        dataset = str(r.get("dataset", ""))
+        ablation = str(r.get("ablation", ""))
+        train_size = r.get("train_size", "")
+        out_dir = str(r.get("out_dir", ""))
+        status = str(r.get("status", ""))
+        err = str(r.get("error", ""))
+
+        u = ""
+        k = ""
+        if ablation.startswith("U") and "_K" in ablation:
+            try:
+                u = ablation.split("_", 1)[0].replace("U", "")
+                k = ablation.split("_K", 1)[1]
+            except Exception:
+                u = ""
+                k = ""
+
+        acc = ""
+        f1 = ""
+        sens = ""
+        spec = ""
+        final_version = ""
+        if status == "ok" and out_dir:
+            try:
+                summary_path = Path(out_dir) / "heldout_test_summary.json"
+                data = json.loads(summary_path.read_text(encoding="utf-8"))
+                metrics = data.get("heldout_test_metrics") or {}
+                final_version = str(data.get("final_version", ""))
+                acc_v = metrics.get("ACC")
+                f1_v = metrics.get("F1")
+                sens_v = metrics.get("Sensitivity")
+                spec_v = metrics.get("Specificity")
+                acc = f"{float(acc_v):.3f}" if acc_v is not None else ""
+                f1 = f"{float(f1_v):.3f}" if f1_v is not None else ""
+                sens = f"{float(sens_v):.3f}" if sens_v is not None else ""
+                spec = f"{float(spec_v):.3f}" if spec_v is not None else ""
+            except Exception as e:
+                status = "error"
+                err = (err + " | " if err else "") + f"ablation_csv_parse_failed: {e}"
+
+        rows.append(
+            {
+                "数据集": dataset,
+                "U": u,
+                "K": k,
+                "训练集规模": str(train_size),
+                "ACC": acc,
+                "F1": f1,
+                "Sensitivity": sens,
+                "Specificity": spec,
+                "保留的是第几次迭代的结果": final_version,
+                "status": status,
+                "out_dir": out_dir,
+                "error": err,
+            }
+        )
+
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "数据集",
+                "U",
+                "K",
+                "训练集规模",
+                "ACC",
+                "F1",
+                "Sensitivity",
+                "Specificity",
+                "保留的是第几次迭代的结果",
+                "status",
+                "out_dir",
+                "error",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"[ablation] csv_written={csv_path}", flush=True)
 
 
 if __name__ == "__main__":
