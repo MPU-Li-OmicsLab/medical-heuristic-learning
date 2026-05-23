@@ -71,3 +71,17 @@ uv run python contrast2/run_contrast2.py --seed 42 --workers 8
 - `checkpoints/`：FT-Transformer 的最优 checkpoint（按 val 选择 best）
   - 路径示例：`contrast2/checkpoints/YHD/train3000/ratio1_10/seed42_best.pth`
 
+## 启发式学习对比（HL）
+
+本阶段也提供启发式学习（HL）的对比脚本，设置固定为两个探针都开启（U1_K1），并按本阶段同样的训练集总数与正负比进行训练与评估。
+
+- 输出：`contrast2/contrast2_hl.csv`
+  - 列：`模型, 数据集, 训练集数据量, ACC, F1, Sensitivity, Specificity`
+  - 排序：按 `数据集 → 训练集数据量（1000→3000）→ 正负比（按 README 列表顺序）`
+- 运行：
+
+```bash
+uv run python contrast2/run_contrast2_hl.py --seed 42 --workers 1
+```
+
+注意：HL 会调用大模型接口进行规则生成与迭代，`--workers` 提高并发可能触发限流/余额消耗过快，建议从 1 开始逐步增加。
