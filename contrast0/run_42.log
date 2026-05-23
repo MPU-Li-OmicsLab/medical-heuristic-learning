@@ -1,0 +1,22 @@
+[contrast0] start dataset=UKB model=deepseek-v4-pro
+[contrast0] start dataset=YHD model=deepseek-v4-pro
+[contrast0] start dataset=UKB model=deepseek-v4-pro-thinking
+[contrast0] start dataset=YHD model=deepseek-v4-pro-thinking
+[contrast0] start dataset=UKB model=deepseek-v4-flash
+[contrast0] start dataset=YHD model=deepseek-v4-flash
+[contrast0] start dataset=YHD model=qwen/qwen3.7-max
+[contrast0] start dataset=UKB model=qwen/qwen3.7-max
+[contrast0] start dataset=UKB model=google/gemini-3.1-pro-preview
+[contrast0] start dataset=YHD model=google/gemini-3.1-pro-preview
+[contrast0] start dataset=UKB model=openai/gpt-5.5-pro
+[contrast0] start dataset=YHD model=openai/gpt-5.5-pro
+[contrast0] failed dataset=YHD model=google/gemini-3.1-pro-preview error=Error code: 403 - {'error': {'message': 'This model is not available in your region.', 'code': 403}}
+[contrast0] failed dataset=YHD model=openai/gpt-5.5-pro error=Error code: 403 - {'error': {'message': 'This model is not available in your region.', 'code': 403}}
+[contrast0] failed dataset=UKB model=google/gemini-3.1-pro-preview error=Error code: 403 - {'error': {'message': 'This model is not available in your region.', 'code': 403}}
+[contrast0] failed dataset=UKB model=openai/gpt-5.5-pro error=Error code: 403 - {'error': {'message': 'This model is not available in your region.', 'code': 403}}
+[contrast0] done dataset=YHD model=deepseek-v4-flash
+[contrast0] done dataset=UKB model=deepseek-v4-flash
+[contrast0] done dataset=YHD model=deepseek-v4-pro
+[contrast0] failed dataset=UKB model=qwen/qwen3.7-max error=Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'qwen/qwen3.7-max is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations', 'provider_name': 'Alibaba', 'is_byok': False}}, 'user_id': 'user_2oD5T2beXE6kHOAGYkEo5mK6zRe'}
+[contrast0] done dataset=UKB model=deepseek-v4-pro
+[contrast0] done dataset=YHD model=qwen/qwen3.7-max
