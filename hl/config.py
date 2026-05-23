@@ -11,6 +11,7 @@ class LLMConfig:
     api_key_env: str = "DEEPSEEK_API_KEY"
     model_name: str = "deepseek-v4-pro"
     temperature: float = 0.3
+    extra_body: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -37,4 +38,3 @@ class RunConfig:
     knowledge_top_k: int = 20
     random_seed: int = 42
     llm_enabled: bool = True
-
