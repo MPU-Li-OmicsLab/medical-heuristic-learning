@@ -1,135 +1,199 @@
-# Continuous Learning（持续学习启发式学习框架）
+# Continuous Learning
 
-本文件夹在不修改 `./hl` 任何已有逻辑的前提下，基于现有启发式学习流程搭建一个“两阶段持续学习”框架，用于模拟特征漂移（特征删除/恢复/新增/重命名）并在第二阶段基于第一阶段的输出继续迭代。
+本目录现在只保留持续学习相关文档与实验输出；持续学习启发式学习的代码主干已经迁移到 `hl/continuous_learning/`，对比实验入口位于仓库根目录的 `run_continuous_learning_experiment.py`。
 
-入口脚本：`continuous_learning/run_continuous_learning.py`
+## 新结构
+- 持续学习主干包：`hl/continuous_learning/`
+- 主入口函数：`hl.continuous_learning.run_continuous_learning(...)`
+- 对比实验入口：`run_continuous_learning_experiment.py`
+- 实验输出目录：`continuous_learning/outputs/`
+- 结果总表：`continuous_learning/continuous_results.csv`
 
-## 目标与核心约束
+## 设计目标
+- 将“持续学习启发式学习主干”和“外部 baseline 对比实验”彻底拆开。
+- 持续学习主干沿用 `hl/orchestrator` 的模块化风格，拆成 probe1、probe2、v0 生成、主编排器等独立文件。
+- 在发生特征漂移时，基于旧策略与新数据共同生成新策略，而不是从零开始重训规则。
+- 第二阶段在生成新 `v0` 后，直接调用 `hl.orchestrator.iteration_step.run_iterations_task(...)` 做迭代，不再绕回普通 `hl.orchestrator.run_heuristic_learning(...)`。
 
-- 持续学习含义：当出现特征漂移时，在“已有启发式系统”的基础上做修改，适配新数据并继续迭代优化。
-- 不覆盖旧系统：旧系统输出目录只作为输入读取与记录；所有新产物写入 `continuous_learning/outputs/...` 的新目录。
-- 两阶段设置（固定）：
-  - Stage1：训练集 1000（1:1）
-  - Stage2：训练集 10（1:1），在 Stage1 的输出目录基础上继续迭代
-  - 两阶段的验证集/测试集：各 500（1:1）
-- 多 seed：默认 `36,40,42`
-- 同时对比 baseline：XGBoost、LightGBM、决策树、MLP、FT-Transformer、逻辑回归（与 HL 同样记录两阶段结果）
+## 代码布局
+- `hl/continuous_learning/config.py`
+  持续学习专用配置对象：`DriftConfig`、`ContinuousLearningConfig`、`ContinuousLearningResult`。
+- `hl/continuous_learning/univariate_probe_step.py`
+  负责 Probe 1 的持续学习更新：复制旧单变量分析、同步删除和重命名、追加新增或恢复变量的统计结果。
+- `hl/continuous_learning/knowledge_probe_step.py`
+  负责 Probe 2 的持续学习更新：复制旧知识表、同步删除和重命名、为新增或恢复变量补充知识条目。
+- `hl/continuous_learning/v0_generation_step.py`
+  负责持续学习版 `v0` 的提示词构造与生成，会把旧 `final_heuristic_model.py` 作为蓝本。
+- `hl/continuous_learning/main_orchestrator.py`
+  持续学习主编排器，统一串联 probe 更新、连续版 `v0` 生成、迭代优化、最终模型导出。
+- `run_continuous_learning_experiment.py`
+  根目录实验入口，负责多数据集、多 seed、两阶段采样、held-out test 评估与 baseline 对比。
 
-## 数据集（默认 MIMIC）
+## 持续学习主干接口
 
-- 数据路径：`./data/MIMIC.csv`
-- 标签列：`death_within_hosp_28days`（0/1）
+持续学习主干入口为：
 
-可以通过参数切换为 UKB/YHD（若你提供对应数据与标签列）。
+```python
+from hl.config import LLMConfig
+from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
+```
 
-## 入口参数（关键）
+调用形式为：
 
-### 数据与标签
+```python
+result = run_continuous_learning(
+    train_df=train_df,
+    test_df=val_df,
+    label_col=label_col,
+    llm_cfg=llm_cfg,
+    continuous_cfg=ContinuousLearningConfig(
+        task_description="Continuous learning example.",
+        drift=DriftConfig(
+            dropped_cols=("old_feature",),
+            added_cols=("new_feature",),
+            renamed_cols=(("old_name", "new_name"),),
+            change_note="Describe the drift clearly.",
+            prev_hl_out_dir=prev_out_dir,
+        )
+    ),
+)
+```
 
-- `--datasets`：默认 `MIMIC`，可填 `MIMIC` / `UKB` / `YHD`（逗号分隔）
-- `--mimic-csv`：默认 `./data/MIMIC.csv`
-- `--mimic-label-col`：默认 `death_within_hosp_28days`
-- `--mimic-prev-hl-outdir`：可选。上一套 HL 输出目录（若为空则 Stage1 从零开始）
+返回值 `result` 中包含：
+- `out_dir`
+- `heuristic_path`
+- `final_model_path`
 
-### 两阶段特征漂移（必须写清楚）
+## 默认输出目录规则
+- 普通 HL 在 `RunConfig.output_dir is None` 时，会写到 `out/<timestamp>/`。
+- 持续学习 HL 在 `ContinuousLearningConfig.output_dir is None` 时，会写到 `out/<timestamp>_continuous_learning/`。
+- 如果显式传入 `output_dir`，则完全使用传入路径。
 
-Stage1：
-- `--stage1-drop-cols`：Stage1 删除列（逗号分隔）
-- `--stage1-add-cols`：Stage1 新增列（逗号分隔，可选）
-- `--stage1-rename-cols`：Stage1 重命名列（`old:new`，逗号分隔，可选）
-- `--stage1-change-note`：Stage1 变更说明（必须提供一句话/一段话）
+## 持续学习主干的执行顺序
+- 校验 `train_df`、`test_df` 与 `label_col`。
+- 根据 `ContinuousLearningConfig` 中的漂移与运行配置记录当前上下文。
+- 更新 Probe 1：
+  读取旧 `probe_univariate_results.csv`，删除失效特征，同步 rename，并对新增或恢复特征补充新分析。
+- 更新 Probe 2：
+  读取旧 `probe_knowledge.md`，删除失效特征，同步 rename，并对新增或恢复特征补充新知识。
+- 生成连续学习版 `v0`：
+  读取旧 `final_heuristic_model.py` 作为 blueprint，结合漂移信息、新 probe 结果和任务描述构造 prompt。
+- 直接调用 `run_iterations_task(...)` 做版本迭代。
+- 从所有版本中选择最佳版本并导出新的 `final_heuristic_model.py`。
 
-Stage2：
-- `--stage2-drop-cols`：Stage2 删除列（逗号分隔）
-- `--stage2-add-cols`：Stage2 新增列（逗号分隔，可选）
-- `--stage2-rename-cols`：Stage2 重命名列（`old:new`，逗号分隔，可选）
-- `--stage2-change-note`：Stage2 变更说明（必须提供一句话/一段话）
+## 提示词与追溯文件
 
-重要规则（恢复列）：
+持续学习输出目录中会写入以下关键文件：
+- `continuous_learning_context.json`
+  记录本次持续学习的 `task_description`、漂移配置与旧输出目录。
+- `probe_univariate_results_prev.csv`
+  上一阶段或上一套系统的 Probe 1 快照。
+- `probe_univariate_results.csv`
+  本轮更新后的 Probe 1 结果。
+- `probe_knowledge_prev.md`
+  上一阶段或上一套系统的 Probe 2 快照。
+- `probe_knowledge.md`
+  本轮更新后的 Probe 2 结果。
+- `probe_knowledge_prompt.txt`
+  Probe 2 使用的提示词。
+- `v0_prompt.txt`
+  连续学习版 `v0` 的提示词。
+- `v0_error_analysis.txt`
+  被接受的 `v0` 设计说明。
+- `v0_attempt_*.txt`
+  各次 `v0` 生成尝试的原始响应。
+- `iteration_log.json`
+  逐轮迭代日志。
+- `final_comparison.txt`
+  `v0`、最佳版本、最后版本的指标对比。
 
-- Stage2 会自动把「Stage1 删除但 Stage2 不再删除」的列视为“恢复列”，加入 Stage2 的 `added_cols`，并在输出文件中记录。
+## 实验入口职责
 
-### 输出与 LLM
+根目录脚本 `run_continuous_learning_experiment.py` 负责：
+- 解析命令行参数。
+- 读取 `MIMIC`、`UKB`、`YHD` 数据。
+- 应用两阶段特征漂移。
+- 做平衡抽样：
+  Stage1 训练集 1000，Stage2 训练集 10，验证集和测试集固定为 500。
+- 调用 `hl.continuous_learning.run_continuous_learning(...)` 完成每个阶段的 HL 持续学习。
+- 在 held-out test 上评估 HL。
+- 训练并评估 baseline：
+  `LogisticRegression`、`MLP`、`DecisionTree`、`XGBoost`、`LightGBM`、`FT-Transformer`。
+- 汇总到 `continuous_learning/continuous_results.csv`。
 
-- `--output-root`：默认 `./continuous_learning/outputs`
-- `--seeds`：默认 `36,40,42`
-- `--llm-base-url`：默认 `https://api.deepseek.com/v1`
-- `--llm-key-env`：默认 `DEEPSEEK_API_KEY`
-- `--llm-model`：默认 `deepseek-v4-pro`
-- `--llm-temperature`：默认 `0.0`
+## 两阶段漂移规则
+- `stage1-change-note` 和 `stage2-change-note` 必须显式提供。
+- Stage2 会自动把“Stage1 删除但 Stage2 不再删除”的列视为恢复列，并加入 Stage2 的 `added_cols`。
+- Stage2 的 `prev_hl_out_dir` 固定指向 Stage1 的 HL 输出目录，因此第二阶段总是在第一阶段规则基础上继续适配。
 
-## 输出结构与追溯
-
-每次 HL 的输出目录（每个 seed × 每个阶段一份）：
-
-`continuous_learning/outputs/<DATASET>/seed<SEED>/<STAGE>/HL/<TIMESTAMP>/`
-
-其中会写入关键追溯文件：
-
-- `adaptation_spec.json`
-  - 记录：删除列/新增列/重命名列/变更说明/上一套 HL 输出目录（prev_hl_out_dir）/采样信息等
-- `heldout_test_summary.json` / `heldout_test_summary.txt`
-  - 记录：阶段指标（ACC/F1/Sensitivity/Specificity）与本阶段漂移信息
-- `probe_univariate_results_prev.csv`、`probe_knowledge_prev.md`
-  - 从“上一套 HL 输出目录（或 Stage1 输出目录）”复制一份，不覆盖原文件
-- `probe_univariate_results.csv`、`probe_knowledge.md`
-  - 在“复制旧表”的基础上，同步删除列、追加新增/恢复列信息，形成新表
-- `v0_prompt.txt` / `v0_error_analysis.txt` / `v0_attempt_*.txt`
-  - 记录“持续学习 V0 生成”的提示词与失败重试
-
-baseline 输出目录（每个 seed 一份，内含两阶段结果）：
-
-`continuous_learning/outputs/<DATASET>/seed<SEED>/baselines/<TIMESTAMP>/`
-
-总表：
-
-- `continuous_learning/continuous_results.csv`
-  - 列：`模型, 数据集, seed, 阶段, ACC, F1, Sensitivity, Specificity, status, error, out_dir`
-  - HL 与 baseline 都会写两阶段结果
-
-## 探针与 V0 的持续学习逻辑（概述）
-
-Stage1：
-
-- 无上一套目录：探针直接基于 Stage1 的训练数据生成（并写入新目录）。
-- 有上一套目录：先复制旧 probe，再删除 dropped、追加 added/rename 对应条目，生成新 probe。
-
-Stage2：
-
-- prev_hl_out_dir 固定为 Stage1 的 HL 输出目录（继续迭代的“上一套系统”）。
-- 探针同样遵循“复制旧表→同步删除→追加新增/恢复”。
-- V0 生成会把 Stage1 的 `final_heuristic_model.py` 作为蓝本写入 prompt，要求生成新的 `predict_v0`，并明确说明删/增/恢复/重命名与变更原因。
-
-迭代步骤与 `./hl` 中普通启发式学习一致：由 `hl.orchestrator.run_heuristic_learning(...)` 执行。
-
-## baseline 的两阶段训练/迁移说明（实现口径）
-
-- LogisticRegression：`warm_start=True`，Stage2 在 Stage1 基础上继续拟合
-- MLP：`warm_start=True`，Stage2 在 Stage1 基础上继续拟合
-- DecisionTree：不做权重迁移，Stage2 记录为 `retrain`
-- XGBoost：若依赖可用，Stage2 使用 `xgb_model` 从 Stage1 booster 继续训练
-- LightGBM：若依赖可用，Stage2 使用 `init_model` 从 Stage1 booster 继续训练
-- FT-Transformer：若 `torch` 可用，Stage2 从 Stage1 的权重继续训练（并保存 `seed*_best.pt`）
-
-注意：baseline 会使用各阶段各自的特征集合，内部会先对齐 feature columns（缺失列补 NaN），再做简单数值化以便训练。
-
-## 运行示例（MIMIC，两阶段删除/恢复）
-
-示例：Stage1 删除 `Blood Lactate`，Stage2 删除 `SIRS`，并恢复 `Blood Lactate`：
+## 运行实验示例
 
 ```bash
-cd /home/yk/medical-heuristic-learning
+cd /home/xw/medical-heuristic-learning
 export DEEPSEEK_API_KEY="你的key"
 
-uv run python continuous_learning/run_continuous_learning.py \
+uv run python run_continuous_learning_experiment.py \
   --datasets MIMIC \
-  --mimic-csv "/home/yk/medical-heuristic-learning/data/MIMIC.csv" \
+  --mimic-csv "./data/MIMIC.csv" \
   --mimic-label-col "death_within_hosp_28days" \
   --seeds "36,40,42" \
   --stage1-drop-cols "Blood Lactate" \
-  --stage1-change-note "阶段1：模拟该检验在新环境中采集缺失/不可用，先移除以减少噪声并让规则适应。" \
+  --stage1-change-note "Stage1: remove Blood Lactate because it becomes unavailable in the new environment." \
   --stage2-drop-cols "SIRS" \
-  --stage2-change-note "阶段2：SIRS 定义发生变化导致分布漂移，移除该列；同时恢复 Blood Lactate，因为该检验已恢复采集，需要重新纳入规则并在阶段1基础上继续迭代。" \
+  --stage2-change-note "Stage2: remove SIRS due to definition drift, and restore Blood Lactate because it becomes available again." \
   --output-root "./continuous_learning/outputs"
 ```
 
+## 最小代码示例
+
+如果你只想调用持续学习主干，而不跑 baseline，可以直接在 Python 中调用：
+
+```python
+from pathlib import Path
+
+import pandas as pd
+
+from hl.config import LLMConfig
+from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
+
+
+data = pd.read_csv("./data/MIMIC.csv")
+label_col = "death_within_hosp_28days"
+
+train_df = data.iloc[:1000].copy()
+val_df = data.iloc[1000:1500].copy()
+
+llm_cfg = LLMConfig(
+    base_url="https://api.deepseek.com/v1",
+    api_key_env="DEEPSEEK_API_KEY",
+    model_name="deepseek-v4-pro",
+    temperature=0.0,
+)
+
+continuous_cfg = ContinuousLearningConfig(
+    output_dir=None,
+    run_univariate_probe=True,
+    run_knowledge_probe=True,
+    run_v0_generation=True,
+    run_iterations=True,
+    task_description="Continuous learning for binary clinical risk prediction.",
+    drift=DriftConfig(
+        dropped_cols=("old_feature",),
+        added_cols=("new_feature",),
+        renamed_cols=(),
+        change_note="Example drift note.",
+        prev_hl_out_dir=Path("./path/to/previous_hl_output"),
+    ),
+)
+
+result = run_continuous_learning(
+    train_df=train_df,
+    test_df=val_df,
+    label_col=label_col,
+    llm_cfg=llm_cfg,
+    continuous_cfg=continuous_cfg,
+)
+
+print(result.out_dir)
+print(result.final_model_path)
+```
