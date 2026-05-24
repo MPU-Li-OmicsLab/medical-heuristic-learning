@@ -30,16 +30,28 @@
 
 脚本内置 6 种模型配置：
 
-- `deepseek-v4-pro`（非思考）
-- `deepseek-v4-pro-thinking`（思考模式）
-- `deepseek-v4-flash`
-- `qwen/qwen3.7-max`
-- `google/gemini-3.1-pro-preview`
-- `openai/gpt-5.5-pro`
+- `deepseek-v4-pro`（非思考，DeepSeek）
+- `deepseek-v4-pro-thinking`（思考模式，DeepSeek）
+- `deepseek-v4-flash`（DeepSeek）
+- `qwen/qwen3.7-max`（OpenRouter）
+- `gemini-3.1-pro-preview`（vveai）
+- `gpt-5.5`（vveai）
 
 ### DeepSeek 思考模式
 
 DeepSeek 的思考模式通过 OpenAI 兼容请求的 `extra_body={"thinking":{"type":"enabled"}}` 打开。参见官方说明：[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)。
+
+### Base URL 与 Key 环境变量
+
+- DeepSeek：`DEEPSEEK_API_KEY`
+- OpenRouter（qwen）：`OPENROUTER_API_KEY`
+- vveai（Gemini/GPT）：`VVEAI_GEMINI_API_KEY`、`VVEAI_GPT55_API_KEY`
+
+如需自定义，可使用脚本读取的覆盖项：
+
+- `CONTRAST0_DEEPSEEK_BASE_URL` / `CONTRAST0_DEEPSEEK_KEY_ENV`
+- `CONTRAST0_ROUTER_BASE_URL` / `CONTRAST0_ROUTER_KEY_ENV`
+- `CONTRAST0_VVEAI_BASE_URL` / `CONTRAST0_VVEAI_GEMINI_KEY_ENV` / `CONTRAST0_VVEAI_GPT55_KEY_ENV`
 
 ## 指标
 
@@ -56,8 +68,11 @@ DeepSeek 的思考模式通过 OpenAI 兼容请求的 `extra_body={"thinking":{"
 
 ```bash
 cd /home/yk/medical-heuristic-learning
-export DEEPSEEK_API_KEY="你的key"
-export OPENROUTER_API_KEY="你的key"
+
+export DEEPSEEK_API_KEY="你的deepseek-key"
+export OPENROUTER_API_KEY="你的openrouter-key"  # 仅用于 qwen/qwen3.7-max
+export VVEAI_GEMINI_API_KEY="你的gemini-key"
+export VVEAI_GPT55_API_KEY="你的gpt-5.5-key"
 
 uv run python contrast0/run_contrast0.py --seed 42 --workers 1
 ```

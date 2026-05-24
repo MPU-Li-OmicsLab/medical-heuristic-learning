@@ -286,17 +286,34 @@ def main() -> None:
 
     deepseek_base = "https://api.deepseek.com/v1"
     deepseek_key_env = "DEEPSEEK_API_KEY"
+
     router_base = "https://openrouter.ai/api/v1"
     router_key_env = "OPENROUTER_API_KEY"
+
+    vveai_base = "https://api.vveai.com"
+    vveai_gemini_key_env = "VVEAI_GEMINI_API_KEY"
+    vveai_gpt55_key_env = "VVEAI_GPT55_API_KEY"
 
     if os.getenv("CONTRAST0_DEEPSEEK_BASE_URL"):
         deepseek_base = os.getenv("CONTRAST0_DEEPSEEK_BASE_URL", deepseek_base)
     if os.getenv("CONTRAST0_DEEPSEEK_KEY_ENV"):
         deepseek_key_env = os.getenv("CONTRAST0_DEEPSEEK_KEY_ENV", deepseek_key_env)
+
     if os.getenv("CONTRAST0_ROUTER_BASE_URL"):
         router_base = os.getenv("CONTRAST0_ROUTER_BASE_URL", router_base)
     if os.getenv("CONTRAST0_ROUTER_KEY_ENV"):
         router_key_env = os.getenv("CONTRAST0_ROUTER_KEY_ENV", router_key_env)
+
+    if os.getenv("CONTRAST0_VVEAI_BASE_URL"):
+        vveai_base = os.getenv("CONTRAST0_VVEAI_BASE_URL", vveai_base)
+    if os.getenv("CONTRAST0_VVEAI_GEMINI_KEY_ENV"):
+        vveai_gemini_key_env = os.getenv("CONTRAST0_VVEAI_GEMINI_KEY_ENV", vveai_gemini_key_env)
+    if os.getenv("CONTRAST0_VVEAI_GPT55_KEY_ENV"):
+        vveai_gpt55_key_env = os.getenv("CONTRAST0_VVEAI_GPT55_KEY_ENV", vveai_gpt55_key_env)
+
+    vveai_base = vveai_base.rstrip("/")
+    if not vveai_base.endswith("/v1"):
+        vveai_base = vveai_base + "/v1"
 
     models = [
         ModelSpec(
@@ -331,17 +348,17 @@ def main() -> None:
             temperature=0.0,
         ),
         ModelSpec(
-            display_name="google/gemini-3.1-pro-preview",
-            base_url=router_base,
-            api_key_env=router_key_env,
-            model_name="google/gemini-3.1-pro-preview",
+            display_name="gemini-3.1-pro-preview",
+            base_url=vveai_base,
+            api_key_env=vveai_gemini_key_env,
+            model_name="gemini-3.1-pro-preview",
             temperature=0.0,
         ),
         ModelSpec(
-            display_name="openai/gpt-5.5-pro",
-            base_url=router_base,
-            api_key_env=router_key_env,
-            model_name="openai/gpt-5.5-pro",
+            display_name="gpt-5.5",
+            base_url=vveai_base,
+            api_key_env=vveai_gpt55_key_env,
+            model_name="gpt-5.5",
             temperature=0.0,
         ),
     ]
