@@ -155,7 +155,12 @@ def run_iterations_task(
                 continue
 
             new_code = proposal.new_policy_code.strip()
-            validate_python_syntax(new_code)
+            try:
+                validate_python_syntax(new_code)
+            except Exception as e:
+                attempt_logs.append({"attempt": attempt, "status": "syntax_invalid", "error": str(e)})
+                continue
+            
             fn_name = extract_function_name(new_code)
             if fn_name != f"predict_{next_version}":
                 attempt_logs.append(
