@@ -9,6 +9,4 @@ data/
 *.pdf
 uv.lock
 temp/
-*.csv
-*.pth
-*.log
+example_out0/
