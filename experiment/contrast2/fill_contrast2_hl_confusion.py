@@ -226,14 +226,15 @@ def _fill_one_csv(*, output_root: Path, csv_path: Path, repo_root: Path) -> None
 
 
 def main() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+    script_dir = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[2]
     p = argparse.ArgumentParser()
     p.add_argument("--repo-root", type=str, default=str(repo_root))
     p.add_argument(
         "--output-roots",
         type=str,
         default="",
-        help="Comma-separated output roots, e.g. ./contrast2/outputs_hl_36,./contrast2/outputs_hl_40,./contrast2/outputs_hl_42 . If empty, auto-detect ./contrast2/outputs_hl_*.",
+        help="Comma-separated output roots, e.g. ./experiment/contrast2/outputs_hl or ./experiment/contrast2/outputs_hl_42 . If empty, auto-detect ./experiment/contrast2/outputs_hl and ./experiment/contrast2/outputs_hl_*.",
     )
     args = p.parse_args()
 
@@ -242,7 +243,11 @@ def main() -> None:
     if args.output_roots.strip():
         roots = [Path(s.strip()) for s in args.output_roots.split(",") if s.strip()]
     else:
-        roots = sorted((repo_root / "contrast2").glob("outputs_hl_*"))
+        roots = []
+        default_root = script_dir / "outputs_hl"
+        if default_root.exists():
+            roots.append(default_root)
+        roots.extend(sorted(script_dir.glob("outputs_hl_*")))
 
     for root in roots:
         root = root.resolve()

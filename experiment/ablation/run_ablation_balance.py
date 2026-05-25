@@ -15,9 +15,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from hl.config import LLMConfig, RunConfig
 from hl.metrics import compute_metrics
@@ -310,7 +311,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-root", type=str, default="./ablation/output_balance")
+    parser.add_argument("--output-root", type=str, default=str(SCRIPT_DIR / "output_balance"))
     parser.add_argument("--dataset", choices=["YHD", "UKB"], default=None)
     parser.add_argument("--ablation", choices=["U1_K1", "U1_K0", "U0_K1", "U0_K0"], default=None)
     parser.add_argument("--train-size", type=int, choices=[3000, 1000, 100, 10], default=None)
@@ -321,8 +322,8 @@ def main() -> None:
     split_spec = SplitSpec(val_total=1000, test_total=1000)
 
     datasets = [
-        ("YHD", Path("./data/YHD_bicarbonate.csv"), "hospital_expire_flag"),
-        ("UKB", Path("./data/UKB.csv"), "label"),
+        ("YHD", REPO_ROOT / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
+        ("UKB", REPO_ROOT / "data" / "UKB.csv", "label"),
     ]
     ablations = [
         (True, True),
@@ -500,4 +501,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

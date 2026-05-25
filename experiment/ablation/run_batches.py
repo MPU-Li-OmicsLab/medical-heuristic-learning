@@ -43,10 +43,11 @@ def _run_one_batch(*, output_root: Path, seed: int, workers: int) -> None:
 
 
 def main() -> None:
+    script_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--base-dir", type=str, default="./ablation/outputs_batches")
+    parser.add_argument("--base-dir", type=str, default=str(script_dir / "outputs_batches"))
     args = parser.parse_args()
 
     runs = int(args.runs)
@@ -72,4 +73,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

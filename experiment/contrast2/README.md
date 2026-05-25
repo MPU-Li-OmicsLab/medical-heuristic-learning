@@ -85,7 +85,7 @@
 从仓库根目录运行：
 
 ```bash
-uv run python contrast2/run_contrast2.py --seed 42 --workers 8
+uv run python experiment/contrast2/run_contrast2.py --seed 42 --workers 8
 ```
 
 参数：
@@ -100,7 +100,7 @@ uv run python contrast2/run_contrast2.py --seed 42 --workers 8
 
 ### 输出文件
 
-运行后会在 `contrast2/` 下生成：
+运行后会在 `experiment/contrast2/` 下生成：
 
 - `contrast2.csv`
 - `checkpoints/`（仅当 `FT-Transformer` 成功训练时产生）
@@ -131,7 +131,7 @@ uv run python contrast2/run_contrast2.py --seed 42 --workers 8
 
 `FT-Transformer` checkpoint 路径示例：
 
-`contrast2/checkpoints/YHD/train3000/ratio1_10/seed42_best.pth`
+`experiment/contrast2/checkpoints/YHD/train3000/ratio1_10/seed42_best.pth`
 
 ## 启发式学习对比（HL）
 
@@ -150,14 +150,14 @@ uv run python contrast2/run_contrast2.py --seed 42 --workers 8
 
 ```bash
 export DEEPSEEK_API_KEY="你的 key"
-uv run python contrast2/run_contrast2_hl.py --seed 42 --workers 1
+uv run python experiment/contrast2/run_contrast2_hl.py --seed 42 --workers 1
 ```
 
 参数：
 
 - `--seed`：控制 `val/test` 划分与训练集采样
 - `--workers`：HL 实验并发进程数
-- `--output-root`：单次 HL 实验目录的输出根目录，默认 `./contrast2/outputs_hl`
+- `--output-root`：单次 HL 实验目录的输出根目录，默认位于 `./experiment/contrast2/outputs_hl`
 
 注意：
 
@@ -168,12 +168,12 @@ uv run python contrast2/run_contrast2_hl.py --seed 42 --workers 1
 
 脚本会产出两类结果：
 
-- 汇总表：`contrast2/contrast2_hl.csv`
+- 汇总表：`experiment/contrast2/contrast2_hl.csv`
 - 每个实验的独立输出目录：`<output-root>/<DATASET>/train<TRAIN_TOTAL>/ratio<POS_NEG>/<TIMESTAMP>/`
 
 例如：
 
-- `contrast2/outputs_hl/UKB/train1000/ratio1_5/20260525_123456/`
+- `experiment/contrast2/outputs_hl/UKB/train1000/ratio1_5/20260525_123456/`
 
 单个实验目录通常包含：
 
@@ -223,18 +223,18 @@ uv run python contrast2/run_contrast2_hl.py --seed 42 --workers 1
 运行方式：
 
 ```bash
-uv run python contrast2/fill_contrast2_hl_confusion.py --output-roots ./contrast2/outputs_hl_42
+uv run python experiment/contrast2/fill_contrast2_hl_confusion.py --output-roots ./experiment/contrast2/outputs_hl_42
 ```
 
 参数：
 
 - `--repo-root`：仓库根目录，默认自动推断
-- `--output-roots`：逗号分隔的多个 HL 输出根目录；若留空，则自动扫描 `./contrast2/outputs_hl_*`
+- `--output-roots`：逗号分隔的多个 HL 输出根目录；若留空，则自动扫描 `./experiment/contrast2/outputs_hl` 与 `./experiment/contrast2/outputs_hl_*`
 
 注意：
 
 - 该脚本面向的是命名为 `contrast2_hl_<seed>.csv` 的结果文件
-- 当前 `run_contrast2_hl.py` 默认输出的汇总文件名是固定的 `contrast2/contrast2_hl.csv`，如果要配合这个补全脚本使用，通常需要你自己按 seed 另存为对应命名格式
+- 当前 `run_contrast2_hl.py` 默认输出的汇总文件名是固定的 `experiment/contrast2/contrast2_hl.csv`，如果要配合这个补全脚本使用，通常需要你自己按 seed 另存为对应命名格式
 
 ## 依赖安装
 

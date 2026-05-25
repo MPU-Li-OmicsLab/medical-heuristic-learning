@@ -4,6 +4,7 @@ import argparse
 import csv
 import importlib.util
 import os
+import sys
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+repo_root = Path(__file__).resolve().parents[2]
+script_dir = Path(__file__).resolve().parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from hl.config import LLMConfig
 from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
@@ -902,7 +908,7 @@ def main() -> None:
     parser.add_argument("--stage2-rename-cols", type=str, default="")
     parser.add_argument("--stage1-change-note", type=str, default="")
     parser.add_argument("--stage2-change-note", type=str, default="")
-    parser.add_argument("--output-root", type=str, default="./continuous_learning/outputs")
+    parser.add_argument("--output-root", type=str, default=str(script_dir / "outputs"))
     parser.add_argument("--llm-base-url", type=str, default=os.getenv("CONTINUOUS_LLM_BASE_URL", "https://api.deepseek.com/v1"))
     parser.add_argument("--llm-key-env", type=str, default=os.getenv("CONTINUOUS_LLM_KEY_ENV", "DEEPSEEK_API_KEY"))
     parser.add_argument("--llm-model", type=str, default=os.getenv("CONTINUOUS_LLM_MODEL", "deepseek-v4-pro"))
@@ -1026,7 +1032,7 @@ def main() -> None:
             )
         )
 
-    out_csv = Path("./continuous_learning/continuous_results.csv")
+    out_csv = script_dir / "continuous_results.csv"
     _write_results_csv(out_csv, all_results)
     print(f"continuous_results_csv={out_csv}", flush=True)
 

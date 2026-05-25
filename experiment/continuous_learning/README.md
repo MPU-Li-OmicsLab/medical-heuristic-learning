@@ -1,13 +1,13 @@
 # Continuous Learning
 
-本目录现在只保留持续学习相关文档与实验输出；持续学习启发式学习的代码主干已经迁移到 `hl/continuous_learning/`，对比实验入口位于仓库根目录的 `run_continuous_learning_experiment.py`。
+本目录现在位于 `experiment/continuous_learning/`，用于保存持续学习相关文档与实验输出；持续学习启发式学习的代码主干位于 `hl/continuous_learning/`，对比实验入口既可以使用仓库根目录的 `run_continuous_learning_experiment.py`，也可以直接使用本目录下的 `experiment/continuous_learning/run_continuous_learning_experiment.py`。
 
 ## 新结构
 - 持续学习主干包：`hl/continuous_learning/`
 - 主入口函数：`hl.continuous_learning.run_continuous_learning(...)`
-- 对比实验入口：`run_continuous_learning_experiment.py`
-- 实验输出目录：`continuous_learning/outputs/`
-- 结果总表：`continuous_learning/continuous_results.csv`
+- 对比实验入口：`run_continuous_learning_experiment.py` 或 `experiment/continuous_learning/run_continuous_learning_experiment.py`
+- 实验输出目录：`experiment/continuous_learning/outputs/`
+- 结果总表：`experiment/continuous_learning/continuous_results.csv`
 
 ## 设计目标
 - 将“持续学习启发式学习主干”和“外部 baseline 对比实验”彻底拆开。
@@ -26,8 +26,8 @@
   负责持续学习版 `v0` 的提示词构造与生成，会把旧 `final_heuristic_model.py` 作为蓝本。
 - `hl/continuous_learning/main_orchestrator.py`
   持续学习主编排器，统一串联 probe 更新、连续版 `v0` 生成、迭代优化、最终模型导出。
-- `run_continuous_learning_experiment.py`
-  根目录实验入口，负责多数据集、多 seed、两阶段采样、held-out test 评估与 baseline 对比。
+- `experiment/continuous_learning/run_continuous_learning_experiment.py`
+  目录内实验入口，负责多数据集、多 seed、两阶段采样、held-out test 评估与 baseline 对比。
 
 ## 持续学习主干接口
 
@@ -109,7 +109,7 @@ result = run_continuous_learning(
 
 ## 实验入口职责
 
-根目录脚本 `run_continuous_learning_experiment.py` 负责：
+- 实验入口脚本 `run_continuous_learning_experiment.py` 负责：
 - 解析命令行参数。
 - 读取 `MIMIC`、`UKB`、`YHD` 数据。
 - 应用两阶段特征漂移。
@@ -119,7 +119,7 @@ result = run_continuous_learning(
 - 在 held-out test 上评估 HL。
 - 训练并评估 baseline：
   `LogisticRegression`、`MLP`、`DecisionTree`、`XGBoost`、`LightGBM`、`FT-Transformer`。
-- 汇总到 `continuous_learning/continuous_results.csv`。
+- 汇总到 `experiment/continuous_learning/continuous_results.csv`。
 
 ## 两阶段漂移规则
 - `stage1-change-note` 和 `stage2-change-note` 必须显式提供。
@@ -132,7 +132,7 @@ result = run_continuous_learning(
 cd /home/xw/medical-heuristic-learning
 export DEEPSEEK_API_KEY="你的key"
 
-uv run python run_continuous_learning_experiment.py \
+uv run python experiment/continuous_learning/run_continuous_learning_experiment.py \
   --datasets MIMIC \
   --mimic-csv "./data/MIMIC.csv" \
   --mimic-label-col "death_within_hosp_28days" \
@@ -141,7 +141,7 @@ uv run python run_continuous_learning_experiment.py \
   --stage1-change-note "Stage1: remove Blood Lactate because it becomes unavailable in the new environment." \
   --stage2-drop-cols "SIRS" \
   --stage2-change-note "Stage2: remove SIRS due to definition drift, and restore Blood Lactate because it becomes available again." \
-  --output-root "./continuous_learning/outputs"
+  --output-root "./experiment/continuous_learning/outputs"
 ```
 
 ## 最小代码示例

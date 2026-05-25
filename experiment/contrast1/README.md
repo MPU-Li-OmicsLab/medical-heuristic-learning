@@ -67,8 +67,8 @@
 
 输出文件：
 
-- `contrast1/contrast1.csv`
-- `contrast1/checkpoints/...`（仅 FT-Transformer）
+- `experiment/contrast1/contrast1.csv`
+- `experiment/contrast1/checkpoints/...`（仅 FT-Transformer）
 
 ### 2. `run_contrast1_balance.py`
 
@@ -80,8 +80,8 @@
 
 输出文件：
 
-- `contrast1/contrast1_balance.csv`
-- `contrast1/checkpoints_balance/...`（仅 FT-Transformer）
+- `experiment/contrast1/contrast1_balance.csv`
+- `experiment/contrast1/checkpoints_balance/...`（仅 FT-Transformer）
 
 ### 3. `run_contrast1_balance_hl.py`
 
@@ -94,8 +94,8 @@
 
 输出文件：
 
-- `contrast1/contrast1_balance_hl.csv`
-- 默认实验目录：`contrast1/outputs_balance_hl_seed<SEED>/...`
+- `experiment/contrast1/contrast1_balance_hl.csv`
+- 默认实验目录：`experiment/contrast1/outputs_balance_hl_seed<SEED>/...`
 
 ## 常规模型列表
 
@@ -181,7 +181,7 @@ uv sync --group dev
 ### 1. 标准常规模型对比
 
 ```bash
-uv run python contrast1/run_contrast1.py --seed 42 --workers 8
+uv run python experiment/contrast1/run_contrast1.py --seed 42 --workers 8
 ```
 
 参数：
@@ -197,7 +197,7 @@ uv run python contrast1/run_contrast1.py --seed 42 --workers 8
 ### 2. 平衡训练集常规模型对比
 
 ```bash
-uv run python contrast1/run_contrast1_balance.py --seed 42 --workers 8
+uv run python experiment/contrast1/run_contrast1_balance.py --seed 42 --workers 8
 ```
 
 参数与标准版相同，但训练集采样方式改为 `1:1` 平衡采样。
@@ -208,7 +208,7 @@ uv run python contrast1/run_contrast1_balance.py --seed 42 --workers 8
 
 ```bash
 export DEEPSEEK_API_KEY="你的 key"
-uv run python contrast1/run_contrast1_balance_hl.py --seed 42 --workers 1
+uv run python experiment/contrast1/run_contrast1_balance_hl.py --seed 42 --workers 1
 ```
 
 参数：
@@ -235,8 +235,8 @@ uv run python contrast1/run_contrast1_balance_hl.py --seed 42 --workers 1
 
 生成：
 
-- `contrast1/contrast1.csv`
-- `contrast1/checkpoints/<DATASET>/train<TRAIN_SIZE>/seed<SEED>_best.pth`
+- `experiment/contrast1/contrast1.csv`
+- `experiment/contrast1/checkpoints/<DATASET>/train<TRAIN_SIZE>/seed<SEED>_best.pth`
 
 `contrast1.csv` 当前列为：
 
@@ -256,8 +256,8 @@ uv run python contrast1/run_contrast1_balance_hl.py --seed 42 --workers 1
 
 生成：
 
-- `contrast1/contrast1_balance.csv`
-- `contrast1/checkpoints_balance/<DATASET>/train<TRAIN_SIZE>/seed<SEED>_best.pth`
+- `experiment/contrast1/contrast1_balance.csv`
+- `experiment/contrast1/checkpoints_balance/<DATASET>/train<TRAIN_SIZE>/seed<SEED>_best.pth`
 
 CSV 列与 `contrast1.csv` 相同。
 
@@ -265,8 +265,8 @@ CSV 列与 `contrast1.csv` 相同。
 
 生成：
 
-- `contrast1/contrast1_balance_hl.csv`
-- `contrast1/outputs_balance_hl_seed<SEED>/<DATASET>/train<TRAIN_SIZE>/<TIMESTAMP>/...`
+- `experiment/contrast1/contrast1_balance_hl.csv`
+- `experiment/contrast1/outputs_balance_hl_seed<SEED>/<DATASET>/train<TRAIN_SIZE>/<TIMESTAMP>/...`
 
 若显式传入 `--output-root`，则实验目录会写到指定位置。
 

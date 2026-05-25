@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-repo_root = Path(__file__).resolve().parents[1]
+repo_root = Path(__file__).resolve().parents[2]
+script_dir = Path(__file__).resolve().parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
@@ -285,7 +286,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--workers", type=int, default=1)
-    p.add_argument("--output-root", type=str, default="./contrast2/outputs_hl")
+    p.add_argument("--output-root", type=str, default=str(script_dir / "outputs_hl"))
     args = p.parse_args()
 
     seed = int(args.seed)
@@ -294,8 +295,8 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     datasets = [
-        DatasetSpec("UKB", Path("./data/UKB.csv"), "label"),
-        DatasetSpec("YHD", Path("./data/YHD_bicarbonate.csv"), "hospital_expire_flag"),
+        DatasetSpec("UKB", repo_root / "data" / "UKB.csv", "label"),
+        DatasetSpec("YHD", repo_root / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
     ]
     split_spec = SplitSpec(val_total=1000, test_total=1000)
     train_totals = [1000, 3000]
@@ -344,7 +345,7 @@ def main() -> None:
 
     results.sort(key=sort_key)
 
-    out_csv = Path("./contrast2/contrast2_hl.csv")
+    out_csv = script_dir / "contrast2_hl.csv"
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -358,4 +359,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

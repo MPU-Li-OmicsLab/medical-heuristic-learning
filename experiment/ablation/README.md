@@ -68,14 +68,14 @@ export DEEPSEEK_API_KEY="你的 key"
 ### 1. 标准消融
 
 ```bash
-uv run python ablation/run_ablation.py --workers 1
+uv run python experiment/ablation/run_ablation.py --workers 1
 ```
 
 常用参数：
 
 - `--workers`：并发进程数，默认 `1`
 - `--seed`：随机种子，默认 `42`
-- `--output-root`：输出根目录，默认 `./ablation/outputs`
+- `--output-root`：输出根目录，默认位于 `./experiment/ablation/outputs`
 - `--dataset`：可选 `YHD` 或 `UKB`
 - `--ablation`：可选 `U1_K1`、`U1_K0`、`U0_K1`、`U0_K0`
 - `--train-size`：可选 `3000`、`1000`、`100`、`10`
@@ -83,30 +83,30 @@ uv run python ablation/run_ablation.py --workers 1
 示例：
 
 ```bash
-uv run python ablation/run_ablation.py --dataset UKB --ablation U1_K0 --train-size 100 --workers 4
+uv run python experiment/ablation/run_ablation.py --dataset UKB --ablation U1_K0 --train-size 100 --workers 4
 ```
 
 ### 2. 平衡训练集消融
 
 ```bash
-uv run python ablation/run_ablation_balance.py --workers 1
+uv run python experiment/ablation/run_ablation_balance.py --workers 1
 ```
 
 常用参数与 `run_ablation.py` 基本一致，默认输出目录不同：
 
-- `--output-root` 默认是 `./ablation/output_balance`
+- `--output-root` 默认位于 `./experiment/ablation/output_balance`
 
 ### 3. 多次重复实验
 
 ```bash
-uv run python ablation/run_batches.py --runs 10 --workers 8
+uv run python experiment/ablation/run_batches.py --runs 10 --workers 8
 ```
 
 参数说明：
 
 - `--runs`：重复运行次数，默认 `10`
 - `--workers`：每一轮内部执行 `run_ablation.py` 时使用的并发进程数，默认 `1`
-- `--base-dir`：批次输出根目录，默认 `./ablation/outputs_batches`
+- `--base-dir`：批次输出根目录，默认位于 `./experiment/ablation/outputs_batches`
 
 注意：
 
@@ -120,11 +120,11 @@ uv run python ablation/run_batches.py --runs 10 --workers 8
 
 对于 `run_ablation.py`，默认输出根目录为：
 
-`ablation/outputs/`
+`experiment/ablation/outputs/`
 
 对于 `run_ablation_balance.py`，默认输出根目录为：
 
-`ablation/output_balance/`
+`experiment/ablation/output_balance/`
 
 单个实验目录结构为：
 
@@ -132,8 +132,8 @@ uv run python ablation/run_batches.py --runs 10 --workers 8
 
 例如：
 
-- `ablation/outputs/YHD/U1_K1/train1000/20260521_153012/`
-- `ablation/output_balance/UKB/U0_K0/train10/20260521_153045/`
+- `experiment/ablation/outputs/YHD/U1_K1/train1000/20260521_153012/`
+- `experiment/ablation/output_balance/UKB/U0_K0/train10/20260521_153045/`
 
 每个实验目录通常会包含：
 
@@ -200,6 +200,6 @@ uv run python ablation/run_batches.py --runs 10 --workers 8
 
 ## 其他说明
 
-- 脚本在运行时会自动把仓库根目录加入 `sys.path`，因此可以直接使用 `python ablation/run_ablation.py` 这种按路径执行的方式
+- 脚本在运行时会自动回到仓库根目录加入 `sys.path`，因此可以直接使用 `python experiment/ablation/run_ablation.py` 这种按路径执行的方式
 - 若 `--workers` 设置过大，虽然程序仍会尝试并行执行，但更容易遇到 API 限流或外部调用失败
 - `run_ablation.py` 和 `run_ablation_balance.py` 都会把异常捕获进结果汇总中；单个实验失败不会阻止整批结果写出 `index.json`

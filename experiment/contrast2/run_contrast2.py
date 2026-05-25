@@ -18,11 +18,22 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-repo_root = Path(__file__).resolve().parents[1]
+repo_root = Path(__file__).resolve().parents[2]
+script_dir = Path(__file__).resolve().parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
 from hl.metrics import compute_metrics
+
+
+def _confusion_counts(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, int]:
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    return {"TP": tp, "FP": fp, "FN": fn, "TN": tn}
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,16 @@ class SplitSpec:
     test_total: int = 1000
     pos_value: int = 1
     neg_value: int = 0
+
+
+@dataclass(frozen=True)
+class RatioSpec:
+    pos: int
+    neg: int
+
+    @property
+    def name(self) -> str:
+        return f"{self.pos}:{self.neg}"
 
 
 def _is_categorical(s: pd.Series) -> bool:
@@ -92,34 +113,51 @@ def _split_val_test_balanced(df: pd.DataFrame, label_col: str, spec: SplitSpec, 
     return train_pool, val_df, test_df
 
 
-def _sample_train_balanced(
+def _counts_from_ratio(total: int, ratio: RatioSpec) -> tuple[int, int]:
+    if total <= 0:
+        raise ValueError("train_total must be positive")
+    denom = ratio.pos + ratio.neg
+    if denom <= 0:
+        raise ValueError("invalid ratio")
+    pos = int(round(total * (ratio.pos / denom)))
+    pos = max(1, min(pos, total - 1))
+    neg = total - pos
+    return pos, neg
+
+
+def _sample_train_ratio(
     train_pool: pd.DataFrame,
     *,
     label_col: str,
-    train_size: int,
+    train_total: int,
+    ratio: RatioSpec,
     seed: int,
     spec: SplitSpec,
-) -> pd.DataFrame:
-    if train_size <= 0:
-        raise ValueError("train_size must be positive")
-    if train_size % 2 != 0:
-        raise ValueError("train_size must be even for 1:1 balanced sampling")
-
-    pos_each = train_size // 2
-    neg_each = train_size // 2
-
+) -> tuple[pd.DataFrame, dict]:
+    pos_target, neg_target = _counts_from_ratio(train_total, ratio)
     y = train_pool[label_col].astype(int)
     pos_pool = train_pool.loc[y == spec.pos_value].copy()
     neg_pool = train_pool.loc[y == spec.neg_value].copy()
     if len(pos_pool) == 0 or len(neg_pool) == 0:
         raise ValueError(f"train_pool has no samples for one class. pos={len(pos_pool)}, neg={len(neg_pool)}")
 
-    pos_replace = len(pos_pool) < pos_each
-    neg_replace = len(neg_pool) < neg_each
+    pos_replace = len(pos_pool) < pos_target
+    neg_replace = len(neg_pool) < neg_target
 
-    pos_df = pos_pool.sample(n=pos_each, replace=pos_replace, random_state=seed + 11)
-    neg_df = neg_pool.sample(n=neg_each, replace=neg_replace, random_state=seed + 23)
-    return pd.concat([pos_df, neg_df], axis=0).sample(frac=1.0, random_state=seed + 97).reset_index(drop=True)
+    pos_df = pos_pool.sample(n=pos_target, replace=pos_replace, random_state=seed + 11)
+    neg_df = neg_pool.sample(n=neg_target, replace=neg_replace, random_state=seed + 23)
+    train_df = pd.concat([pos_df, neg_df], axis=0).sample(frac=1.0, random_state=seed + 97).reset_index(drop=True)
+    meta = {
+        "train_total": int(train_total),
+        "ratio": ratio.name,
+        "pos_target": int(pos_target),
+        "neg_target": int(neg_target),
+        "pos_available": int(len(pos_pool)),
+        "neg_available": int(len(neg_pool)),
+        "pos_replace": bool(pos_replace),
+        "neg_replace": bool(neg_replace),
+    }
+    return train_df, meta
 
 
 def _build_preprocessor(df: pd.DataFrame, label_col: str) -> tuple[ColumnTransformer, list[str], list[str]]:
@@ -163,15 +201,6 @@ def _try_import(name: str):
         return None
 
 
-def _scale_pos_weight(y: np.ndarray) -> float:
-    y = np.asarray(y).astype(int)
-    pos = float((y == 1).sum())
-    neg = float((y == 0).sum())
-    if pos <= 0:
-        return 1.0
-    return max(neg / pos, 1e-6)
-
-
 def _fit_eval_sklearn(
     *,
     model_name: str,
@@ -191,12 +220,17 @@ def _fit_eval_sklearn(
     pipe.fit(x_train, y_train)
     y_pred = _predict_labels(pipe, x_test)
     metrics = compute_metrics(y_test, y_pred)
+    cm = _confusion_counts(y_test, y_pred)
     return {
         "model": model_name,
         "ACC": metrics.get("ACC"),
         "F1": metrics.get("F1"),
         "Sensitivity": metrics.get("Sensitivity"),
         "Specificity": metrics.get("Specificity"),
+        "TP": cm["TP"],
+        "FP": cm["FP"],
+        "FN": cm["FN"],
+        "TN": cm["TN"],
         "status": "ok",
         "error": "",
     }
@@ -219,8 +253,10 @@ def _fit_eval_ft_transformer(
             "F1": None,
             "Sensitivity": None,
             "Specificity": None,
-            "best_epoch": "",
-            "checkpoint": "",
+            "TP": None,
+            "FP": None,
+            "FN": None,
+            "TN": None,
             "status": "missing_dependency",
             "error": "torch not installed",
         }
@@ -427,7 +463,13 @@ def _fit_eval_ft_transformer(
 
     xte_num_t = to_tensor_num(xte_num)
     xte_cat_t = to_tensor_cat(xte_cat)
-    metrics = eval_split(xte_num_t, xte_cat_t, y_test)
+    model.eval()
+    with torch.no_grad():
+        logits = model(xte_num_t, xte_cat_t)
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+    y_pred_test = (probs >= 0.5).astype(int)
+    metrics = compute_metrics(y_test, y_pred_test)
+    cm = _confusion_counts(y_test, y_pred_test)
 
     return {
         "model": "FT-Transformer",
@@ -435,8 +477,10 @@ def _fit_eval_ft_transformer(
         "F1": metrics.get("F1"),
         "Sensitivity": metrics.get("Sensitivity"),
         "Specificity": metrics.get("Specificity"),
-        "best_epoch": int(best_epoch) if best_epoch >= 0 else "",
-        "checkpoint": str(checkpoint_path) if checkpoint_path.exists() else "",
+        "TP": cm["TP"],
+        "FP": cm["FP"],
+        "FN": cm["FN"],
+        "TN": cm["TN"],
         "status": "ok",
         "error": "",
     }
@@ -448,7 +492,8 @@ def _run_cpu_models_block(
     csv_path: str,
     label_col: str,
     seed: int,
-    train_size: int,
+    train_total: int,
+    ratio: RatioSpec,
     val_total: int,
     test_total: int,
 ) -> list[dict]:
@@ -459,29 +504,33 @@ def _run_cpu_models_block(
     df[label_col] = df[label_col].astype(int)
 
     split_spec = SplitSpec(val_total=val_total, test_total=test_total)
-    train_pool, val_df, test_df = _split_val_test_balanced(df, label_col, split_spec, seed=seed)
-    train_df = _sample_train_balanced(train_pool, label_col=label_col, train_size=train_size, seed=seed + train_size, spec=split_spec)
+    train_pool, _val_df, test_df = _split_val_test_balanced(df, label_col, split_spec, seed=seed)
+    train_df, _meta = _sample_train_ratio(
+        train_pool,
+        label_col=label_col,
+        train_total=train_total,
+        ratio=ratio,
+        seed=seed + train_total + ratio.pos * 1000 + ratio.neg,
+        spec=split_spec,
+    )
     preprocessor, _num_cols, _cat_cols = _build_preprocessor(df, label_col)
-
-    y_train = train_df[label_col].astype(int).to_numpy()
-    spw = _scale_pos_weight(y_train)
 
     xgb = _try_import("xgboost")
     lgb = _try_import("lightgbm")
 
     rows: list[dict] = []
 
-    use_mlp_early_stopping = int(train_size) >= 100
-    mlp_batch_size = min(256, int(train_size))
+    mlp_batch_size = min(256, int(train_total))
+    use_mlp_early_stopping = int(train_total) >= 100
 
     models: list[tuple[str, object]] = []
     models.append(
         (
             "LogisticRegression",
-            LogisticRegression(max_iter=2000, solver="lbfgs", n_jobs=None, random_state=seed, class_weight="balanced"),
+            LogisticRegression(max_iter=2000, solver="lbfgs", n_jobs=None, random_state=seed),
         )
     )
-    models.append(("DecisionTree", DecisionTreeClassifier(random_state=seed, class_weight="balanced", max_depth=None)))
+    models.append(("DecisionTree", DecisionTreeClassifier(random_state=seed, max_depth=None)))
     models.append(
         (
             "MLP",
@@ -515,7 +564,6 @@ def _run_cpu_models_block(
                     eval_metric="logloss",
                     random_state=seed,
                     n_jobs=1,
-                    scale_pos_weight=spw,
                 ),
             )
         )
@@ -524,13 +572,16 @@ def _run_cpu_models_block(
             {
                 "模型": "XGBoost",
                 "数据集": dataset_name,
-                "训练集数据量": str(train_size),
+                "训练集数据量": str(train_total),
+                "训练集正负比": ratio.name,
                 "ACC": "",
                 "F1": "",
                 "Sensitivity": "",
                 "Specificity": "",
-                "best_epoch": "",
-                "checkpoint": "",
+                "TP": "",
+                "FP": "",
+                "FN": "",
+                "TN": "",
                 "status": "missing_dependency",
                 "error": "xgboost not installed",
             }
@@ -549,7 +600,6 @@ def _run_cpu_models_block(
                     reg_lambda=1.0,
                     random_state=seed,
                     n_jobs=1,
-                    is_unbalance=True,
                 ),
             )
         )
@@ -558,13 +608,16 @@ def _run_cpu_models_block(
             {
                 "模型": "LightGBM",
                 "数据集": dataset_name,
-                "训练集数据量": str(train_size),
+                "训练集数据量": str(train_total),
+                "训练集正负比": ratio.name,
                 "ACC": "",
                 "F1": "",
                 "Sensitivity": "",
                 "Specificity": "",
-                "best_epoch": "",
-                "checkpoint": "",
+                "TP": "",
+                "FP": "",
+                "FN": "",
+                "TN": "",
                 "status": "missing_dependency",
                 "error": "lightgbm not installed",
             }
@@ -584,13 +637,16 @@ def _run_cpu_models_block(
                 {
                     "模型": model_name,
                     "数据集": dataset_name,
-                    "训练集数据量": str(train_size),
+                    "训练集数据量": str(train_total),
+                    "训练集正负比": ratio.name,
                     "ACC": f"{float(r['ACC']):.3f}" if r["ACC"] is not None else "",
                     "F1": f"{float(r['F1']):.3f}" if r["F1"] is not None else "",
                     "Sensitivity": f"{float(r['Sensitivity']):.3f}" if r["Sensitivity"] is not None else "",
                     "Specificity": f"{float(r['Specificity']):.3f}" if r["Specificity"] is not None else "",
-                    "best_epoch": "",
-                    "checkpoint": "",
+                    "TP": str(r["TP"]) if r.get("TP") is not None else "",
+                    "FP": str(r["FP"]) if r.get("FP") is not None else "",
+                    "FN": str(r["FN"]) if r.get("FN") is not None else "",
+                    "TN": str(r["TN"]) if r.get("TN") is not None else "",
                     "status": r["status"],
                     "error": r["error"],
                 }
@@ -600,13 +656,16 @@ def _run_cpu_models_block(
                 {
                     "模型": model_name,
                     "数据集": dataset_name,
-                    "训练集数据量": str(train_size),
+                    "训练集数据量": str(train_total),
+                    "训练集正负比": ratio.name,
                     "ACC": "",
                     "F1": "",
                     "Sensitivity": "",
                     "Specificity": "",
-                    "best_epoch": "",
-                    "checkpoint": "",
+                    "TP": "",
+                    "FP": "",
+                    "FN": "",
+                    "TN": "",
                     "status": "error",
                     "error": str(e),
                 }
@@ -614,20 +673,32 @@ def _run_cpu_models_block(
     return rows
 
 
-def run_contrast_balance(seed: int = 42, workers: int = 1) -> Path:
-    out_dir = Path("./contrast1")
+def run_contrast2(seed: int = 42, workers: int = 1) -> Path:
+    out_dir = script_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     datasets = [
-        DatasetSpec("UKB", Path("./data/UKB.csv"), "label"),
-        DatasetSpec("YHD", Path("./data/YHD_bicarbonate.csv"), "hospital_expire_flag"),
+        DatasetSpec("UKB", repo_root / "data" / "UKB.csv", "label"),
+        DatasetSpec("YHD", repo_root / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
     ]
     split_spec = SplitSpec(val_total=1000, test_total=1000)
-    train_sizes = [3000, 1000, 500, 100, 50, 10]
+
+    train_totals = [1000, 3000]
+    ratios = [
+        RatioSpec(1, 1),
+        RatioSpec(1, 2),
+        RatioSpec(2, 1),
+        RatioSpec(1, 5),
+        RatioSpec(5, 1),
+        RatioSpec(1, 10),
+        RatioSpec(10, 1),
+        RatioSpec(1, 50),
+        RatioSpec(50, 1),
+    ]
 
     rows: list[dict] = []
 
-    cpu_jobs: list[tuple[DatasetSpec, int]] = [(ds, train_size) for ds in datasets for train_size in train_sizes]
+    cpu_jobs: list[tuple[DatasetSpec, int, RatioSpec]] = [(ds, t, r) for ds in datasets for t in train_totals for r in ratios]
     if int(workers) > 1:
         with ProcessPoolExecutor(max_workers=int(workers)) as ex:
             futs = [
@@ -637,23 +708,25 @@ def run_contrast_balance(seed: int = 42, workers: int = 1) -> Path:
                     csv_path=str(ds.csv_path),
                     label_col=ds.label_col,
                     seed=int(seed),
-                    train_size=int(train_size),
+                    train_total=int(t),
+                    ratio=r,
                     val_total=int(split_spec.val_total),
                     test_total=int(split_spec.test_total),
                 )
-                for ds, train_size in cpu_jobs
+                for ds, t, r in cpu_jobs
             ]
             for fut in as_completed(futs):
                 rows.extend(fut.result())
     else:
-        for ds, train_size in cpu_jobs:
+        for ds, t, r in cpu_jobs:
             rows.extend(
                 _run_cpu_models_block(
                     dataset_name=ds.name,
                     csv_path=str(ds.csv_path),
                     label_col=ds.label_col,
                     seed=int(seed),
-                    train_size=int(train_size),
+                    train_total=int(t),
+                    ratio=r,
                     val_total=int(split_spec.val_total),
                     test_total=int(split_spec.test_total),
                 )
@@ -667,70 +740,81 @@ def run_contrast_balance(seed: int = 42, workers: int = 1) -> Path:
         df[ds.label_col] = df[ds.label_col].astype(int)
 
         train_pool, val_df, test_df = _split_val_test_balanced(df, ds.label_col, split_spec, seed=seed)
-        for train_size in train_sizes:
-            train_df = _sample_train_balanced(
-                train_pool,
-                label_col=ds.label_col,
-                train_size=train_size,
-                seed=seed + train_size,
-                spec=split_spec,
-            )
-            try:
-                rft = _fit_eval_ft_transformer(
-                    train_df=train_df,
-                    val_df=val_df,
-                    test_df=test_df,
+        for t in train_totals:
+            for r in ratios:
+                train_df, _meta = _sample_train_ratio(
+                    train_pool,
                     label_col=ds.label_col,
-                    seed=seed,
-                    checkpoint_dir=out_dir / "checkpoints_balance" / ds.name / f"train{train_size}",
+                    train_total=t,
+                    ratio=r,
+                    seed=seed + t + r.pos * 1000 + r.neg,
+                    spec=split_spec,
                 )
-                rows.append(
-                    {
-                        "模型": "FT-Transformer",
-                        "数据集": ds.name,
-                        "训练集数据量": str(train_size),
-                        "ACC": f"{float(rft['ACC']):.3f}" if rft["ACC"] is not None else "",
-                        "F1": f"{float(rft['F1']):.3f}" if rft["F1"] is not None else "",
-                        "Sensitivity": f"{float(rft['Sensitivity']):.3f}" if rft["Sensitivity"] is not None else "",
-                        "Specificity": f"{float(rft['Specificity']):.3f}" if rft["Specificity"] is not None else "",
-                        "best_epoch": str(rft.get("best_epoch", "")),
-                        "checkpoint": str(rft.get("checkpoint", "")),
-                        "status": rft["status"],
-                        "error": rft["error"],
-                    }
-                )
-            except Exception as e:
-                rows.append(
-                    {
-                        "模型": "FT-Transformer",
-                        "数据集": ds.name,
-                        "训练集数据量": str(train_size),
-                        "ACC": "",
-                        "F1": "",
-                        "Sensitivity": "",
-                        "Specificity": "",
-                        "best_epoch": "",
-                        "checkpoint": "",
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
+                try:
+                    rft = _fit_eval_ft_transformer(
+                        train_df=train_df,
+                        val_df=val_df,
+                        test_df=test_df,
+                        label_col=ds.label_col,
+                        seed=seed,
+                        checkpoint_dir=out_dir / "checkpoints" / ds.name / f"train{t}" / f"ratio{r.name.replace(':','_')}",
+                    )
+                    rows.append(
+                        {
+                            "模型": "FT-Transformer",
+                            "数据集": ds.name,
+                            "训练集数据量": str(t),
+                            "训练集正负比": r.name,
+                            "ACC": f"{float(rft['ACC']):.3f}" if rft["ACC"] is not None else "",
+                            "F1": f"{float(rft['F1']):.3f}" if rft["F1"] is not None else "",
+                            "Sensitivity": f"{float(rft['Sensitivity']):.3f}" if rft["Sensitivity"] is not None else "",
+                            "Specificity": f"{float(rft['Specificity']):.3f}" if rft["Specificity"] is not None else "",
+                            "TP": str(rft["TP"]) if rft.get("TP") is not None else "",
+                            "FP": str(rft["FP"]) if rft.get("FP") is not None else "",
+                            "FN": str(rft["FN"]) if rft.get("FN") is not None else "",
+                            "TN": str(rft["TN"]) if rft.get("TN") is not None else "",
+                            "status": rft["status"],
+                            "error": rft["error"],
+                        }
+                    )
+                except Exception as e:
+                    rows.append(
+                        {
+                            "模型": "FT-Transformer",
+                            "数据集": ds.name,
+                            "训练集数据量": str(t),
+                            "训练集正负比": r.name,
+                            "ACC": "",
+                            "F1": "",
+                            "Sensitivity": "",
+                            "Specificity": "",
+                            "TP": "",
+                            "FP": "",
+                            "FN": "",
+                            "TN": "",
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
 
     model_order = {"XGBoost": 0, "LightGBM": 1, "DecisionTree": 2, "MLP": 3, "FT-Transformer": 4, "LogisticRegression": 5}
     dataset_order = {"UKB": 0, "YHD": 1}
+    train_order = {1000: 0, 3000: 1}
+    ratio_order = {r.name: i for i, r in enumerate(ratios)}
 
-    def key_fn(r: dict) -> tuple:
-        m = str(r.get("模型", ""))
-        ds = str(r.get("数据集", ""))
+    def key_fn(row: dict) -> tuple:
+        m = str(row.get("模型", ""))
+        ds = str(row.get("数据集", ""))
         try:
-            ts = int(str(r.get("训练集数据量", "")))
+            t = int(str(row.get("训练集数据量", "")))
         except Exception:
-            ts = 1_000_000_000
-        return (model_order.get(m, 99), dataset_order.get(ds, 99), ts)
+            t = 1_000_000_000
+        rr = str(row.get("训练集正负比", ""))
+        return (model_order.get(m, 99), dataset_order.get(ds, 99), train_order.get(t, 99), ratio_order.get(rr, 99))
 
     rows.sort(key=key_fn)
 
-    out_path = out_dir / "contrast1_balance.csv"
+    out_path = out_dir / "contrast2.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -738,19 +822,21 @@ def run_contrast_balance(seed: int = 42, workers: int = 1) -> Path:
                 "模型",
                 "数据集",
                 "训练集数据量",
+                "训练集正负比",
                 "ACC",
                 "F1",
                 "Sensitivity",
                 "Specificity",
-                "best_epoch",
-                "checkpoint",
+                "TP",
+                "FP",
+                "FN",
+                "TN",
                 "status",
                 "error",
             ],
         )
         writer.writeheader()
         writer.writerows(rows)
-
     return out_path
 
 
@@ -759,10 +845,9 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--workers", type=int, default=1)
     args = p.parse_args()
-    out = run_contrast_balance(seed=int(args.seed), workers=int(args.workers))
-    print(f"contrast1_balance_csv={out}", flush=True)
+    out = run_contrast2(seed=int(args.seed), workers=int(args.workers))
+    print(f"contrast2_csv={out}", flush=True)
 
 
 if __name__ == "__main__":
     main()
-

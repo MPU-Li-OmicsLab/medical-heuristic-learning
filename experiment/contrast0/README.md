@@ -155,14 +155,14 @@ export OPENROUTER_API_KEY="你的 openrouter key"
 export VVEAI_GEMINI_API_KEY="你的 gemini key"
 export VVEAI_GPT55_API_KEY="你的 gpt-5.5 key"
 
-uv run python contrast0/run_contrast0.py --seed 42 --workers 1
+uv run python experiment/contrast0/run_contrast0.py --seed 42 --workers 1
 ```
 
 参数说明：
 
 - `--seed`：控制 `val/test/train` 抽样以及主流程随机种子
 - `--workers`：多进程并发数
-- `--output-root`：实验输出根目录，默认 `./contrast0/outputs`
+- `--output-root`：实验输出根目录，默认位于 `./experiment/contrast0/outputs`
 
 说明：
 
@@ -176,7 +176,7 @@ uv run python contrast0/run_contrast0.py --seed 42 --workers 1
 
 脚本运行结束后会写出：
 
-- `contrast0/contrast0.csv`
+- `experiment/contrast0/contrast0.csv`
 
 该文件当前列为：
 
@@ -201,7 +201,7 @@ uv run python contrast0/run_contrast0.py --seed 42 --workers 1
 
 每个实验会输出到：
 
-- `contrast0/outputs/<DATASET>/<MODEL>/<TIMESTAMP>/`
+- `experiment/contrast0/outputs/<DATASET>/<MODEL>/<TIMESTAMP>/`
 
 如果使用 `--output-root`，则路径变为：
 
@@ -213,8 +213,8 @@ uv run python contrast0/run_contrast0.py --seed 42 --workers 1
 
 示例：
 
-- `contrast0/outputs/UKB/deepseek-v4-pro/20260525_123456/`
-- `contrast0/outputs/YHD/qwen_qwen3.7-max/20260525_123501/`
+- `experiment/contrast0/outputs/UKB/deepseek-v4-pro/20260525_123456/`
+- `experiment/contrast0/outputs/YHD/qwen_qwen3.7-max/20260525_123501/`
 
 单个实验目录通常包含：
 
@@ -233,5 +233,5 @@ uv run python contrast0/run_contrast0.py --seed 42 --workers 1
 
 ## 其他说明
 
-- 脚本会在运行时自动把仓库根目录加入 `sys.path`，因此可以直接使用 `python contrast0/run_contrast0.py` 这种按路径执行的方式
+- 脚本会在运行时自动回到仓库根目录加入 `sys.path`，因此可以直接使用 `python experiment/contrast0/run_contrast0.py` 这种按路径执行的方式
 - 与 `ablation` 不同，这里没有额外生成 `index.json` 一类的批次级索引文件
