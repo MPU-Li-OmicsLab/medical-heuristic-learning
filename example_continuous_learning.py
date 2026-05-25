@@ -11,6 +11,7 @@ from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_co
 def main() -> None:
     data_path = Path("./data/YHD_bicarbonate.csv")
     prev_out_dir = Path("./example_out")
+    output_dir = Path("./example_out_continuous_learning")
     label_col = "hospital_expire_flag"
     dropped_feature = "wbc"
 
@@ -39,7 +40,7 @@ def main() -> None:
     )
 
     continuous_cfg = ContinuousLearningConfig(
-        output_dir=None,
+        output_dir=output_dir,
         run_univariate_probe=True,
         run_knowledge_probe=True,
         run_v0_generation=True,
