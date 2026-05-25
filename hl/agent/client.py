@@ -20,7 +20,6 @@ class LLMClient:
         model_name: str,
         temperature: float = 0.3,
         api_key: str | None = None,
-        extra_body: dict | None = None,
     ) -> None:
         actual_api_key = api_key or os.getenv(api_key_env, "")
         if not actual_api_key:
