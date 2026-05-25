@@ -8,6 +8,7 @@ from hl.config import RunConfig
 from hl.continuous_learning.config import DriftConfig
 from hl.evolution.rule_utils import extract_function_name, strip_code_fences, validate_python_syntax
 from hl.utils.io import append_text, write_text
+from hl.utils.progress import log_progress
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -103,6 +104,7 @@ def generate_v0_task(
     metric_desc: str,
 ) -> None:
     if heuristic_path.exists():
+        log_progress("HL-CL-V0", f"Reusing existing heuristic file: {heuristic_path}.")
         return
     if not run_cfg.run_v0_generation:
         raise RuntimeError("heuristic_system.py not found and run_v0_generation=False; cannot continue.")
@@ -123,6 +125,10 @@ def generate_v0_task(
     last_error: Exception | None = None
     last_resp: str = ""
     for attempt in range(1, max(1, run_cfg.max_llm_attempts) + 1):
+        log_progress(
+            "HL-CL-V0",
+            f"Requesting drift-aware v0 heuristic from LLM (attempt {attempt}/{max(1, run_cfg.max_llm_attempts)}).",
+        )
         resp = client.chat_json([ChatMessage(role="user", content=prompt)])
         last_resp = resp
         try:
@@ -148,9 +154,11 @@ def generate_v0_task(
                 heuristic_path.parent / "v0_attempt_summary.txt",
                 f"accepted_attempt={attempt}\n",
             )
+            log_progress("HL-CL-V0", f"Accepted and saved drift-aware v0 heuristic to {heuristic_path}.")
             return
         except Exception as exc:
             last_error = exc
+            log_progress("HL-CL-V0", f"Attempt {attempt} failed validation: {exc}.")
             write_text(
                 heuristic_path.parent / f"v0_attempt_{attempt}_raw.txt",
                 (resp or "") + ("\n" if resp else ""),

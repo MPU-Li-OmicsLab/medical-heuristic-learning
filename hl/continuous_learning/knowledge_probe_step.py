@@ -7,6 +7,7 @@ from hl.agent.prompts import get_knowledge_probe_prompt
 from hl.config import RunConfig
 from hl.continuous_learning.config import DriftConfig
 from hl.utils.io import write_text
+from hl.utils.progress import log_progress
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -99,16 +100,23 @@ def run_knowledge_probe_task(
 ) -> str:
     prev_path = drift.prev_hl_out_dir / "probe_knowledge.md" if drift.prev_hl_out_dir is not None else Path("__missing__")
     prev_md = _read_text_if_exists(prev_path).strip()
+    if prev_md:
+        log_progress("HL-CL-K", f"Loaded previous knowledge probe from {prev_path}.")
+    else:
+        log_progress("HL-CL-K", "No previous knowledge probe is available under drift context.")
     write_text(knowledge_path.parent / "probe_knowledge_prev.md", prev_md + ("\n" if prev_md else ""))
 
     prompt_path = knowledge_path.parent / "probe_knowledge_prompt.txt"
     if not run_cfg.run_knowledge_probe or client is None:
         if knowledge_path.exists():
+            log_progress("HL-CL-K", f"Reusing existing knowledge probe file: {knowledge_path}.")
             return _read_text_if_exists(knowledge_path).strip()
         if prev_md:
+            log_progress("HL-CL-K", "Knowledge probe is skipped; reusing filtered previous knowledge table.")
             header, rows = _parse_markdown_table(prev_md)
             return _render_markdown_table(header, _filter_previous_rows(header, rows, drift))
         write_text(prompt_path, "")
+        log_progress("HL-CL-K", "Knowledge probe is unavailable; continuing with empty knowledge context.")
         return ""
 
     header, rows = _parse_markdown_table(prev_md)
@@ -116,6 +124,7 @@ def run_knowledge_probe_task(
     add_features = [col for col in drift.added_cols if col]
 
     if not prev_md:
+        log_progress("HL-CL-K", "No previous knowledge table found; querying a full knowledge probe.")
         full_md = _query_knowledge_probe(
             client=client,
             feature_cols=list(feature_cols),
@@ -124,14 +133,17 @@ def run_knowledge_probe_task(
             prompt_path=prompt_path,
         )
         write_text(knowledge_path, full_md + ("\n" if full_md else ""))
+        log_progress("HL-CL-K", f"Saved knowledge probe results to {knowledge_path}.")
         return full_md
 
     if not add_features:
         out_md = _render_markdown_table(header, kept_rows) if header else prev_md
         write_text(prompt_path, "")
         write_text(knowledge_path, out_md + ("\n" if out_md else ""))
+        log_progress("HL-CL-K", "No added features detected; wrote filtered previous knowledge table.")
         return out_md
 
+    log_progress("HL-CL-K", f"Querying incremental knowledge probe for {len(add_features)} added features.")
     add_md = _query_knowledge_probe(
         client=client,
         feature_cols=add_features,
@@ -159,4 +171,5 @@ def run_knowledge_probe_task(
 
     out_md = _render_markdown_table(header, merged_rows)
     write_text(knowledge_path, out_md + ("\n" if out_md else ""))
+    log_progress("HL-CL-K", f"Saved merged knowledge probe results to {knowledge_path}.")
     return out_md

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -16,6 +16,7 @@ from hl.evolution.error_analysis import collect_errors, format_error_report
 from hl.evolution.rule_utils import ParsedProposal, extract_function_name, strip_code_fences, validate_python_syntax
 from hl.metrics import compute_metrics
 from hl.utils.io import append_text
+from hl.utils.progress import log_progress
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ def run_iterations_task(
     metric_desc: str,
     report_features: list[str],
 ) -> tuple[list[IterationRecord], list[dict]]:
+    log_progress("HL-ITER", f"Loading heuristic module from {heuristic_path}.")
     ns = _load_heuristic_module(heuristic_path)
     fn_v0 = ns.get("predict_v0")
     if fn_v0 is None:
@@ -96,14 +98,18 @@ def run_iterations_task(
     v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
     records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
     append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
+    log_progress("HL-ITER", f"Baseline v0 metrics: {metrics_v0}.")
 
     if not run_cfg.run_iterations:
+        log_progress("HL-ITER", "Iteration stage is disabled; returning v0 only.")
         return records, iteration_log
     if client is None:
+        log_progress("HL-ITER", "LLM client is unavailable; skipping iterative optimization.")
         return records, iteration_log
 
     for i in range(1, max(0, run_cfg.iterations) + 1):
         next_version = f"v{i}"
+        log_progress("HL-ITER", f"Starting iteration {i}/{max(0, run_cfg.iterations)} for {next_version}.")
         current_code = heuristic_path.read_text(encoding="utf-8")
 
         y_pred_train = _predict_with_function(current_fn, train_df, label_col)
@@ -136,11 +142,16 @@ def run_iterations_task(
         accepted = False
         attempt_logs: list[dict] = []
         for attempt in range(1, max(1, run_cfg.max_llm_attempts) + 1):
+            log_progress(
+                "HL-ITER",
+                f"Requesting proposal for {next_version} (attempt {attempt}/{max(1, run_cfg.max_llm_attempts)}).",
+            )
             resp = client.chat_json([ChatMessage(role="user", content=prompt)])
             try:
                 proposal = _parse_proposal(resp)
             except Exception as e:
                 attempt_logs.append({"attempt": attempt, "status": "json_parse_failed", "error": str(e)})
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: json_parse_failed ({e}).")
                 continue
 
             if proposal.version != next_version:
@@ -152,6 +163,7 @@ def run_iterations_task(
                         "got": proposal.version,
                     }
                 )
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: version_mismatch.")
                 continue
 
             new_code = proposal.new_policy_code.strip()
@@ -159,6 +171,7 @@ def run_iterations_task(
                 validate_python_syntax(new_code)
             except Exception as e:
                 attempt_logs.append({"attempt": attempt, "status": "syntax_invalid", "error": str(e)})
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: syntax_invalid ({e}).")
                 continue
             
             fn_name = extract_function_name(new_code)
@@ -171,6 +184,7 @@ def run_iterations_task(
                         "got": fn_name,
                     }
                 )
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: function_name_mismatch.")
                 continue
 
             _append_new_version(heuristic_path, version_code=new_code, error_analysis=proposal.error_analysis)
@@ -178,6 +192,7 @@ def run_iterations_task(
             current_fn = ns.get(f"predict_{next_version}")
             if current_fn is None:
                 attempt_logs.append({"attempt": attempt, "status": "load_failed"})
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: load_failed.")
                 continue
 
             current_version = next_version
@@ -188,6 +203,7 @@ def run_iterations_task(
             m = compute_metrics(y_true_test, y_pred_test)
             records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=m))
             append_text(evolution_results_path, f"{current_version}\t{m}\n")
+            log_progress("HL-ITER", f"Accepted {current_version} with metrics: {m}.")
 
             y_pred_train_new = _predict_with_function(current_fn, train_df, label_col)
             degr = detect_degradation(y_true_train, y_pred_train, y_pred_train_new)
@@ -203,6 +219,11 @@ def run_iterations_task(
             )
             last_regressed_indices = list(degr.degraded_indices)
             last_regressed_examples = list(examples)
+            if last_regressed_indices:
+                log_progress(
+                    "HL-ITER",
+                    f"Detected {len(last_regressed_indices)} regressed training examples after accepting {current_version}.",
+                )
             break
 
         iteration_log.append(
@@ -215,6 +236,8 @@ def run_iterations_task(
             }
         )
         if not accepted:
+            log_progress("HL-ITER", f"Stopping iterations because {next_version} was not accepted.")
             break
 
+    log_progress("HL-ITER", f"Iteration stage finished with {len(records)} recorded versions.")
     return records, iteration_log
