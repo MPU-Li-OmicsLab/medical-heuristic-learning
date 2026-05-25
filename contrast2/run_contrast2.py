@@ -25,6 +25,16 @@ if str(repo_root) not in sys.path:
 from hl.metrics import compute_metrics
 
 
+def _confusion_counts(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, int]:
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    return {"TP": tp, "FP": fp, "FN": fn, "TN": tn}
+
+
 @dataclass(frozen=True)
 class DatasetSpec:
     name: str
@@ -209,12 +219,17 @@ def _fit_eval_sklearn(
     pipe.fit(x_train, y_train)
     y_pred = _predict_labels(pipe, x_test)
     metrics = compute_metrics(y_test, y_pred)
+    cm = _confusion_counts(y_test, y_pred)
     return {
         "model": model_name,
         "ACC": metrics.get("ACC"),
         "F1": metrics.get("F1"),
         "Sensitivity": metrics.get("Sensitivity"),
         "Specificity": metrics.get("Specificity"),
+        "TP": cm["TP"],
+        "FP": cm["FP"],
+        "FN": cm["FN"],
+        "TN": cm["TN"],
         "status": "ok",
         "error": "",
     }
@@ -237,6 +252,10 @@ def _fit_eval_ft_transformer(
             "F1": None,
             "Sensitivity": None,
             "Specificity": None,
+            "TP": None,
+            "FP": None,
+            "FN": None,
+            "TN": None,
             "status": "missing_dependency",
             "error": "torch not installed",
         }
@@ -443,7 +462,13 @@ def _fit_eval_ft_transformer(
 
     xte_num_t = to_tensor_num(xte_num)
     xte_cat_t = to_tensor_cat(xte_cat)
-    metrics = eval_split(xte_num_t, xte_cat_t, y_test)
+    model.eval()
+    with torch.no_grad():
+        logits = model(xte_num_t, xte_cat_t)
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+    y_pred_test = (probs >= 0.5).astype(int)
+    metrics = compute_metrics(y_test, y_pred_test)
+    cm = _confusion_counts(y_test, y_pred_test)
 
     return {
         "model": "FT-Transformer",
@@ -451,6 +476,10 @@ def _fit_eval_ft_transformer(
         "F1": metrics.get("F1"),
         "Sensitivity": metrics.get("Sensitivity"),
         "Specificity": metrics.get("Specificity"),
+        "TP": cm["TP"],
+        "FP": cm["FP"],
+        "FN": cm["FN"],
+        "TN": cm["TN"],
         "status": "ok",
         "error": "",
     }
@@ -548,6 +577,10 @@ def _run_cpu_models_block(
                 "F1": "",
                 "Sensitivity": "",
                 "Specificity": "",
+                "TP": "",
+                "FP": "",
+                "FN": "",
+                "TN": "",
                 "status": "missing_dependency",
                 "error": "xgboost not installed",
             }
@@ -580,6 +613,10 @@ def _run_cpu_models_block(
                 "F1": "",
                 "Sensitivity": "",
                 "Specificity": "",
+                "TP": "",
+                "FP": "",
+                "FN": "",
+                "TN": "",
                 "status": "missing_dependency",
                 "error": "lightgbm not installed",
             }
@@ -605,6 +642,10 @@ def _run_cpu_models_block(
                     "F1": f"{float(r['F1']):.3f}" if r["F1"] is not None else "",
                     "Sensitivity": f"{float(r['Sensitivity']):.3f}" if r["Sensitivity"] is not None else "",
                     "Specificity": f"{float(r['Specificity']):.3f}" if r["Specificity"] is not None else "",
+                    "TP": str(r["TP"]) if r.get("TP") is not None else "",
+                    "FP": str(r["FP"]) if r.get("FP") is not None else "",
+                    "FN": str(r["FN"]) if r.get("FN") is not None else "",
+                    "TN": str(r["TN"]) if r.get("TN") is not None else "",
                     "status": r["status"],
                     "error": r["error"],
                 }
@@ -620,6 +661,10 @@ def _run_cpu_models_block(
                     "F1": "",
                     "Sensitivity": "",
                     "Specificity": "",
+                    "TP": "",
+                    "FP": "",
+                    "FN": "",
+                    "TN": "",
                     "status": "error",
                     "error": str(e),
                 }
@@ -723,6 +768,10 @@ def run_contrast2(seed: int = 42, workers: int = 1) -> Path:
                             "F1": f"{float(rft['F1']):.3f}" if rft["F1"] is not None else "",
                             "Sensitivity": f"{float(rft['Sensitivity']):.3f}" if rft["Sensitivity"] is not None else "",
                             "Specificity": f"{float(rft['Specificity']):.3f}" if rft["Specificity"] is not None else "",
+                            "TP": str(rft["TP"]) if rft.get("TP") is not None else "",
+                            "FP": str(rft["FP"]) if rft.get("FP") is not None else "",
+                            "FN": str(rft["FN"]) if rft.get("FN") is not None else "",
+                            "TN": str(rft["TN"]) if rft.get("TN") is not None else "",
                             "status": rft["status"],
                             "error": rft["error"],
                         }
@@ -738,6 +787,10 @@ def run_contrast2(seed: int = 42, workers: int = 1) -> Path:
                             "F1": "",
                             "Sensitivity": "",
                             "Specificity": "",
+                            "TP": "",
+                            "FP": "",
+                            "FN": "",
+                            "TN": "",
                             "status": "error",
                             "error": str(e),
                         }
@@ -773,6 +826,10 @@ def run_contrast2(seed: int = 42, workers: int = 1) -> Path:
                 "F1",
                 "Sensitivity",
                 "Specificity",
+                "TP",
+                "FP",
+                "FN",
+                "TN",
                 "status",
                 "error",
             ],
