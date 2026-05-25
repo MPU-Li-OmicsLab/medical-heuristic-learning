@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score
 
 
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray | None = None) -> dict[str, float]:
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
 
@@ -23,17 +23,9 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray 
         sensitivity = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
         specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
 
-    auc = float("nan")
-    if is_binary and y_score is not None:
-        try:
-            auc = float(roc_auc_score(y_true, np.asarray(y_score)))
-        except Exception:
-            auc = float("nan")
-
     return {
         "ACC": acc,
         "F1": f1,
-        "AUC": auc,
         "Sensitivity": sensitivity,
         "Specificity": specificity,
     }
@@ -49,4 +41,3 @@ def generate_metric_description(metric_priority: list[str] | tuple[str, ...]) ->
         f"This optimization prioritizes {metrics[0]} first, then {metrics[1]}. "
         "Focus on balancing false negatives and false positives."
     )
-

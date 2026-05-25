@@ -14,6 +14,7 @@ from hl.orchestrator.knowledge_probe_step import run_knowledge_probe_task
 from hl.orchestrator.univariate_probe_step import run_univariate_probe_task
 from hl.orchestrator.v0_generation_step import generate_v0_task
 from hl.utils.io import ensure_dir, write_json, write_text
+from hl.utils.progress import log_progress
 
 
 def _pick_best_record(records: list[IterationRecord], metric_priority: tuple[str, ...]) -> IterationRecord:
@@ -41,6 +42,7 @@ def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str)
 def run_heuristic_learning(
     train_df: pd.DataFrame, test_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
 ) -> None:
+    log_progress("HL", "Starting heuristic learning run.")
     if run_cfg.output_dir is None:
         base = Path.cwd() / "out"
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -49,6 +51,7 @@ def run_heuristic_learning(
         out_dir = run_cfg.output_dir
 
     ensure_dir(out_dir)
+    log_progress("HL", f"Using output directory: {out_dir}")
     train_df = train_df.reset_index(drop=True)
     test_df = test_df.reset_index(drop=True)
 
@@ -72,14 +75,19 @@ def run_heuristic_learning(
 
     client: LLMClient | None = None
     if run_cfg.llm_enabled:
+        log_progress("HL", f"Initializing LLM client with model={llm_cfg.model_name}.")
         client = LLMClient(
             base_url=llm_cfg.base_url,
             api_key_env=llm_cfg.api_key_env,
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
             api_key=llm_cfg.api_key,
+            extra_body=llm_cfg.extra_body,
         )
+    else:
+        log_progress("HL", "LLM is disabled; reusable artifacts must already exist on disk.")
 
+    log_progress("HL", "Step 1/4: Running univariate probe.")
     _top_features, report_features, univariate_summary = run_univariate_probe_task(
         train_df=train_df,
         label_col=label_col,
@@ -87,6 +95,8 @@ def run_heuristic_learning(
         univariate_path=univariate_path,
         feature_cols=feature_cols,
     )
+    log_progress("HL", "Step 1/4 completed.")
+    log_progress("HL", "Step 2/4: Running knowledge probe.")
     knowledge_table = run_knowledge_probe_task(
         client=client,
         feature_cols=feature_cols,
@@ -94,6 +104,8 @@ def run_heuristic_learning(
         run_cfg=run_cfg,
         knowledge_path=knowledge_path,
     )
+    log_progress("HL", "Step 2/4 completed.")
+    log_progress("HL", "Step 3/4: Generating v0 heuristic.")
     generate_v0_task(
         client=client,
         run_cfg=run_cfg,
@@ -102,6 +114,8 @@ def run_heuristic_learning(
         knowledge_table=knowledge_table,
         metric_desc=metric_desc,
     )
+    log_progress("HL", "Step 3/4 completed.")
+    log_progress("HL", "Step 4/4: Running iterative optimization.")
     records, iteration_log = run_iterations_task(
         client=client,
         train_df=train_df,
@@ -113,6 +127,7 @@ def run_heuristic_learning(
         metric_desc=metric_desc,
         report_features=report_features,
     )
+    log_progress("HL", "Step 4/4 completed.")
 
     write_json(iteration_log_path, iteration_log)
 
@@ -124,6 +139,7 @@ def run_heuristic_learning(
     v0 = records[0]
 
     _export_final_model(out_dir, heuristic_path, best.version)
+    log_progress("HL", f"Exported final model with version={best.version}.")
 
     comparison = (
         f"METRIC_PRIORITY={run_cfg.metric_priority}\n"
@@ -132,3 +148,4 @@ def run_heuristic_learning(
         f"LAST({last.version})={last.metrics}\n"
     )
     write_text(final_comparison_path, comparison)
+    log_progress("HL", "Heuristic learning run finished.")

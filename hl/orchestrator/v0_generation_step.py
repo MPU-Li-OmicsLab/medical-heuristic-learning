@@ -8,6 +8,7 @@ from hl.agent.prompts import get_rule_generation_prompt
 from hl.config import RunConfig
 from hl.evolution.rule_utils import ParsedProposal, extract_function_name, strip_code_fences, validate_python_syntax
 from hl.utils.io import append_text, write_text
+from hl.utils.progress import log_progress
 
 
 def _parse_proposal(text: str) -> ParsedProposal:
@@ -30,6 +31,7 @@ def generate_v0_task(
     metric_desc: str,
 ) -> None:
     if heuristic_path.exists():
+        log_progress("HL-V0", f"Reusing existing heuristic file: {heuristic_path}.")
         return
     if not run_cfg.run_v0_generation:
         raise RuntimeError("heuristic_system.py not found and run_v0_generation=False; cannot continue.")
@@ -42,17 +44,35 @@ def generate_v0_task(
         metric_desc=metric_desc,
         task_description=run_cfg.task_description,
     )
-    resp = client.chat_json([ChatMessage(role="user", content=prompt)])
-    p = _parse_proposal(resp)
-    if p.version != "v0":
-        raise RuntimeError(f"v0 generation failed: version mismatch (expected v0, got {p.version})")
-    validate_python_syntax(p.new_policy_code)
-    fn_name = extract_function_name(p.new_policy_code)
-    if fn_name != "predict_v0":
-        raise RuntimeError(f"v0 generation failed: function name mismatch (expected predict_v0, got {fn_name})")
+    last_error: Exception | None = None
+    last_resp: str = ""
+    p: ParsedProposal | None = None
+    for attempt in range(1, max(1, run_cfg.max_llm_attempts) + 1):
+        log_progress("HL-V0", f"Requesting v0 heuristic from LLM (attempt {attempt}/{max(1, run_cfg.max_llm_attempts)}).")
+        resp = client.chat_json([ChatMessage(role="user", content=prompt)])
+        last_resp = resp
+        try:
+            p = _parse_proposal(resp)
+            if p.version != "v0":
+                raise RuntimeError(f"v0 generation failed: version mismatch (expected v0, got {p.version})")
+            validate_python_syntax(p.new_policy_code)
+            fn_name = extract_function_name(p.new_policy_code)
+            if fn_name != "predict_v0":
+                raise RuntimeError(f"v0 generation failed: function name mismatch (expected predict_v0, got {fn_name})")
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            p = None
+            log_progress("HL-V0", f"Attempt {attempt} failed validation: {e}.")
+            continue
+    if last_error is not None or p is None:
+        preview = (last_resp or "").strip().replace("\n", "\\n")
+        preview = preview[:500]
+        raise RuntimeError(f"v0 generation failed after retries: {last_error}; resp_preview={preview}")
 
     header = "CURRENT_VERSION = 'v0'\n\n"
     write_text(heuristic_path, header + p.new_policy_code.strip() + "\n")
     v0_error_analysis = p.error_analysis or "v0"
     append_text(heuristic_path, f"\n\nERROR_ANALYSIS_predict_v0 = {json.dumps(v0_error_analysis, ensure_ascii=False)}\n")
-
+    log_progress("HL-V0", f"Accepted and saved v0 heuristic to {heuristic_path}.")

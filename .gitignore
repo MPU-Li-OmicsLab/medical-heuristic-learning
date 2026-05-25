@@ -5,7 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 out*/
-data/
 *.pdf
 uv.lock
 temp/
+example_out0/
