@@ -190,15 +190,6 @@ def _try_import(name: str):
         return None
 
 
-def _scale_pos_weight(y: np.ndarray) -> float:
-    y = np.asarray(y).astype(int)
-    pos = float((y == 1).sum())
-    neg = float((y == 0).sum())
-    if pos <= 0:
-        return 1.0
-    return max(neg / pos, 1e-6)
-
-
 def _fit_eval_sklearn(
     *,
     model_name: str,
@@ -494,9 +485,6 @@ def _run_cpu_models_block(
     )
     preprocessor, _num_cols, _cat_cols = _build_preprocessor(df, label_col)
 
-    y_train = train_df[label_col].astype(int).to_numpy()
-    spw = _scale_pos_weight(y_train)
-
     xgb = _try_import("xgboost")
     lgb = _try_import("lightgbm")
 
@@ -509,10 +497,10 @@ def _run_cpu_models_block(
     models.append(
         (
             "LogisticRegression",
-            LogisticRegression(max_iter=2000, solver="lbfgs", n_jobs=None, random_state=seed, class_weight="balanced"),
+            LogisticRegression(max_iter=2000, solver="lbfgs", n_jobs=None, random_state=seed),
         )
     )
-    models.append(("DecisionTree", DecisionTreeClassifier(random_state=seed, class_weight="balanced", max_depth=None)))
+    models.append(("DecisionTree", DecisionTreeClassifier(random_state=seed, max_depth=None)))
     models.append(
         (
             "MLP",
@@ -546,7 +534,6 @@ def _run_cpu_models_block(
                     eval_metric="logloss",
                     random_state=seed,
                     n_jobs=1,
-                    scale_pos_weight=spw,
                 ),
             )
         )
@@ -579,7 +566,6 @@ def _run_cpu_models_block(
                     reg_lambda=1.0,
                     random_state=seed,
                     n_jobs=1,
-                    is_unbalance=True,
                 ),
             )
         )
@@ -807,4 +793,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
