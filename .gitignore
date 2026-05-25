@@ -8,3 +8,7 @@ out*/
 data/
 *.pdf
 uv.lock
+temp/
+*.csv
+*.pth
+*.log
