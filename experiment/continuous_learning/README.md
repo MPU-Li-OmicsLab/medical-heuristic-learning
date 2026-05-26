@@ -1,13 +1,18 @@
 # Continuous Learning
 
-本目录现在位于 `experiment/continuous_learning/`，用于保存持续学习相关文档与实验输出；持续学习启发式学习的代码主干位于 `hl/continuous_learning/`，对比实验入口既可以使用仓库根目录的 `run_continuous_learning_experiment.py`，也可以直接使用本目录下的 `experiment/continuous_learning/run_continuous_learning_experiment.py`。
+本目录现在位于 `experiment/continuous_learning/`，用于保存持续学习相关文档与实验输出；持续学习启发式学习的代码主干位于 `hl/continuous_learning/`。实验脚本已拆分为共享数据流模块、HL 持续学习脚本、Baseline 对比脚本和总控入口脚本。
 
 ## 新结构
 - 持续学习主干包：`hl/continuous_learning/`
 - 主入口函数：`hl.continuous_learning.run_continuous_learning(...)`
-- 对比实验入口：`run_continuous_learning_experiment.py` 或 `experiment/continuous_learning/run_continuous_learning_experiment.py`
+- 共享数据流模块：`experiment/continuous_learning/continuous_learning_experiment_common.py`
+- HL 持续学习脚本：`experiment/continuous_learning/run_continuous_learning_hl.py`
+- Baseline 对比脚本：`experiment/continuous_learning/run_continuous_learning_baselines.py`
+- 总控入口：`experiment/continuous_learning/run_continuous_learning_experiment.py`
 - 实验输出目录：`experiment/continuous_learning/outputs/`
-- 结果总表：`experiment/continuous_learning/continuous_results.csv`
+- HL 结果总表：`experiment/continuous_learning/continuous_hl_results.csv`
+- Baseline 结果总表：`experiment/continuous_learning/continuous_baseline_results.csv`
+- 合并结果总表：`experiment/continuous_learning/continuous_results.csv`
 
 ## 设计目标
 - 将“持续学习启发式学习主干”和“外部 baseline 对比实验”彻底拆开。
@@ -27,11 +32,17 @@
 - `hl/continuous_learning/v0_generation_step.py`
   负责持续学习版 `v0` 的提示词构造与生成，会把旧 `final_heuristic_model.py` 作为蓝本。
 - `hl/continuous_learning/iteration_step.py`
-  持续学习专用迭代优化逻辑，复用标准 HL 的评估/校验策略，但使用独立 prompt 构造并落盘保存每轮迭代提示词。
+  持续学习专用迭代优化逻辑，复用标准 HL 的评估/校验策略，但使用独立 prompt 构造。
 - `hl/continuous_learning/main_orchestrator.py`
   持续学习主编排器，统一串联 probe 更新、连续版 `v0` 生成、迭代优化、最终模型导出。
+- `experiment/continuous_learning/continuous_learning_experiment_common.py`
+  共享实验数据流，统一处理固定实验配置、两阶段漂移配置、平衡切分、训练采样以及结果 CSV 写入。
+- `experiment/continuous_learning/run_continuous_learning_hl.py`
+  只运行两阶段 HL 持续学习，并保存 HL 专属结果表。
+- `experiment/continuous_learning/run_continuous_learning_baselines.py`
+  只运行 Baseline 对比模型，并复用同一份两阶段数据流。
 - `experiment/continuous_learning/run_continuous_learning_experiment.py`
-  目录内实验入口，负责多数据集、多 seed、两阶段采样、held-out test 评估与 baseline 对比。
+  总控入口，依次调用 HL 与 Baseline 两个脚本逻辑，并写出合并总表。
 
 ## 持续学习主干接口
 
@@ -105,21 +116,37 @@ result = run_continuous_learning(
 
 ## 实验入口职责
 
-- 实验入口脚本 `run_continuous_learning_experiment.py` 负责：
-- 解析命令行参数。
-- 读取 `MIMIC`、`UKB`、`YHD` 数据。
+- 共享模块 `continuous_learning_experiment_common.py` 负责：
+- 写死实验配置，不再解析命令行参数。
+- 固定读取 `data/merged_by_subject_id_complete_rows_without_unit_cols_renamed.csv`。
+- 固定数据集为 `MIMIC`，标签列为 `death_within_hosp_28days`。
+- 固定随机种子为 `36`、`40`、`42`。
+- 固定两阶段特征集合：
+  Stage1 使用 `SIRS`，Stage2 删除 `SIRS` 并增加 `SOFA`。
 - 应用两阶段特征漂移。
 - 做平衡抽样：
   Stage1 训练集 1000，Stage2 训练集 10，验证集和测试集固定为 500。
-- 调用 `hl.continuous_learning.run_continuous_learning(...)` 完成每个阶段的 HL 持续学习。
+- `run_continuous_learning_hl.py` 负责：
+- 调用 `hl.continuous_learning.run_continuous_learning(...)` 完成两个阶段的 HL 持续学习。
 - 在 held-out test 上评估 HL。
+- 汇总到 `experiment/continuous_learning/continuous_hl_results.csv`。
+- `run_continuous_learning_baselines.py` 负责：
 - 训练并评估 baseline：
   `LogisticRegression`、`MLP`、`DecisionTree`、`XGBoost`、`LightGBM`、`FT-Transformer`。
+- 汇总到 `experiment/continuous_learning/continuous_baseline_results.csv`。
+- `run_continuous_learning_experiment.py` 负责：
+- 依次运行 HL 与 Baseline 两条链路。
 - 汇总到 `experiment/continuous_learning/continuous_results.csv`。
 
+## 数据流一致性
+- HL 与 Baseline 不再各自实现一套取数逻辑，而是统一复用 `continuous_learning_experiment_common.py`。
+- 两边都使用同一套：
+  平衡划分、训练采样、阶段定义、漂移应用和随机种子规则。
+- 共享模块会在阶段 manifest 中记录 source row ids，因此可以追溯并核对两个脚本在相同 seed 下得到的是同一批样本。
+
 ## 两阶段漂移规则
-- `stage1-change-note` 和 `stage2-change-note` 必须显式提供。
-- Stage2 会自动把“Stage1 删除但 Stage2 不再删除”的列视为恢复列，并加入 Stage2 的 `added_cols`。
+- Stage1 使用原始 ICU 基线特征集合，其中包含 `SIRS`。
+- Stage2 删除 `SIRS`，并增加 `SOFA`。
 - Stage2 的 `prev_hl_out_dir` 固定指向 Stage1 的 HL 输出目录，因此第二阶段总是在第一阶段规则基础上继续适配。
 
 ## 运行实验示例
@@ -128,16 +155,9 @@ result = run_continuous_learning(
 cd /home/xw/medical-heuristic-learning
 export DEEPSEEK_API_KEY="你的key"
 
-uv run python experiment/continuous_learning/run_continuous_learning_experiment.py \
-  --datasets MIMIC \
-  --mimic-csv "./data/MIMIC.csv" \
-  --mimic-label-col "death_within_hosp_28days" \
-  --seeds "36,40,42" \
-  --stage1-drop-cols "Blood Lactate" \
-  --stage1-change-note "Stage1: remove Blood Lactate because it becomes unavailable in the new environment." \
-  --stage2-drop-cols "SIRS" \
-  --stage2-change-note "Stage2: remove SIRS due to definition drift, and restore Blood Lactate because it becomes available again." \
-  --output-root "./experiment/continuous_learning/outputs"
+uv run python experiment/continuous_learning/run_continuous_learning_hl.py
+uv run python experiment/continuous_learning/run_continuous_learning_baselines.py
+uv run python experiment/continuous_learning/run_continuous_learning_experiment.py
 ```
 
 ## 最小代码示例
