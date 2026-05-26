@@ -22,8 +22,12 @@
   负责 Probe 1 的持续学习更新：复制旧单变量分析、同步删除和重命名、追加新增或恢复变量的统计结果。
 - `hl/continuous_learning/knowledge_probe_step.py`
   负责 Probe 2 的持续学习更新：复制旧知识表、同步删除和重命名、为新增或恢复变量补充知识条目。
+- `hl/agent/continuous_prompts.py`
+  集中维护持续学习专用 prompt，包括知识探测、连续版 `v0` 生成与迭代优化提示词。
 - `hl/continuous_learning/v0_generation_step.py`
   负责持续学习版 `v0` 的提示词构造与生成，会把旧 `final_heuristic_model.py` 作为蓝本。
+- `hl/continuous_learning/iteration_step.py`
+  持续学习专用迭代优化逻辑，复用标准 HL 的评估/校验策略，但使用独立 prompt 构造并落盘保存每轮迭代提示词。
 - `hl/continuous_learning/main_orchestrator.py`
   持续学习主编排器，统一串联 probe 更新、连续版 `v0` 生成、迭代优化、最终模型导出。
 - `experiment/continuous_learning/run_continuous_learning_experiment.py`
@@ -94,14 +98,6 @@ result = run_continuous_learning(
   上一阶段或上一套系统的 Probe 2 快照。
 - `probe_knowledge.md`
   本轮更新后的 Probe 2 结果。
-- `probe_knowledge_prompt.txt`
-  Probe 2 使用的提示词。
-- `v0_prompt.txt`
-  连续学习版 `v0` 的提示词。
-- `v0_error_analysis.txt`
-  被接受的 `v0` 设计说明。
-- `v0_attempt_*.txt`
-  各次 `v0` 生成尝试的原始响应。
 - `iteration_log.json`
   逐轮迭代日志。
 - `final_comparison.txt`

@@ -180,10 +180,6 @@ print(result.final_model_path)
 - `continuous_learning_context.json`
 - `probe_univariate_results_prev.csv`
 - `probe_knowledge_prev.md`
-- `probe_knowledge_prompt.txt`
-- `v0_prompt.txt`
-- `v0_error_analysis.txt`
-- `v0_attempt_*.txt`
 
 ## 运行时进度输出
 
@@ -301,7 +297,6 @@ def run_heuristic_learning(
 | `univariate_top_k` | `int` | `30` | 进入摘要的 top-k 单变量特征数。 |
 | `random_seed` | `int` | `42` | 适配流程中的随机种子。 |
 | `llm_enabled` | `bool` | `True` | 是否初始化 LLM client。 |
-| `write_prompt_artifacts` | `bool` | `True` | 当前 dataclass 中存在的配置字段。 |
 
 ### `ContinuousLearningResult`
 

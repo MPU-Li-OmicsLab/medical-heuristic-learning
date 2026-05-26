@@ -31,7 +31,6 @@ class ContinuousLearningConfig:
     univariate_top_k: int = 30
     random_seed: int = 42
     llm_enabled: bool = True
-    write_prompt_artifacts: bool = True
 
 
 @dataclass(frozen=True)

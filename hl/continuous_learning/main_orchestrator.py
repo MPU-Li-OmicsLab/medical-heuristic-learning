@@ -9,11 +9,11 @@ import pandas as pd
 from hl.agent.client import LLMClient
 from hl.config import LLMConfig, RunConfig
 from hl.continuous_learning.config import ContinuousLearningConfig, ContinuousLearningResult
+from hl.continuous_learning.iteration_step import IterationRecord, run_iterations_task
 from hl.continuous_learning.knowledge_probe_step import run_knowledge_probe_task
 from hl.continuous_learning.univariate_probe_step import run_univariate_probe_task
 from hl.continuous_learning.v0_generation_step import generate_v0_task
 from hl.metrics import generate_metric_description
-from hl.orchestrator.iteration_step import IterationRecord, run_iterations_task
 from hl.utils.io import ensure_dir, write_json, write_text
 from hl.utils.progress import log_progress
 

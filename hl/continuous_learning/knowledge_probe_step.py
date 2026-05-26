@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hl.agent.client import ChatMessage, LLMClient
-from hl.agent.prompts import get_knowledge_probe_prompt
+from hl.agent.continuous_prompts import get_continuous_knowledge_probe_prompt
 from hl.config import RunConfig
 from hl.continuous_learning.config import DriftConfig
 from hl.utils.io import write_text
@@ -82,10 +82,12 @@ def _query_knowledge_probe(
     feature_cols: list[str],
     label_col: str,
     task_description: str,
-    prompt_path: Path,
 ) -> str:
-    prompt = get_knowledge_probe_prompt(features=feature_cols, target=label_col, task_description=task_description)
-    write_text(prompt_path, prompt + "\n")
+    prompt = get_continuous_knowledge_probe_prompt(
+        features=feature_cols,
+        target=label_col,
+        task_description=task_description,
+    )
     return client.chat_text([ChatMessage(role="user", content=prompt)]).strip()
 
 
@@ -106,7 +108,6 @@ def run_knowledge_probe_task(
         log_progress("HL-CL-K", "No previous knowledge probe is available under drift context.")
     write_text(knowledge_path.parent / "probe_knowledge_prev.md", prev_md + ("\n" if prev_md else ""))
 
-    prompt_path = knowledge_path.parent / "probe_knowledge_prompt.txt"
     if not run_cfg.run_knowledge_probe or client is None:
         if knowledge_path.exists():
             log_progress("HL-CL-K", f"Reusing existing knowledge probe file: {knowledge_path}.")
@@ -115,7 +116,6 @@ def run_knowledge_probe_task(
             log_progress("HL-CL-K", "Knowledge probe is skipped; reusing filtered previous knowledge table.")
             header, rows = _parse_markdown_table(prev_md)
             return _render_markdown_table(header, _filter_previous_rows(header, rows, drift))
-        write_text(prompt_path, "")
         log_progress("HL-CL-K", "Knowledge probe is unavailable; continuing with empty knowledge context.")
         return ""
 
@@ -130,7 +130,6 @@ def run_knowledge_probe_task(
             feature_cols=list(feature_cols),
             label_col=label_col,
             task_description=run_cfg.task_description,
-            prompt_path=prompt_path,
         )
         write_text(knowledge_path, full_md + ("\n" if full_md else ""))
         log_progress("HL-CL-K", f"Saved knowledge probe results to {knowledge_path}.")
@@ -138,7 +137,6 @@ def run_knowledge_probe_task(
 
     if not add_features:
         out_md = _render_markdown_table(header, kept_rows) if header else prev_md
-        write_text(prompt_path, "")
         write_text(knowledge_path, out_md + ("\n" if out_md else ""))
         log_progress("HL-CL-K", "No added features detected; wrote filtered previous knowledge table.")
         return out_md
@@ -149,7 +147,6 @@ def run_knowledge_probe_task(
         feature_cols=add_features,
         label_col=label_col,
         task_description=run_cfg.task_description,
-        prompt_path=prompt_path,
     )
     add_header, add_rows = _parse_markdown_table(add_md)
 

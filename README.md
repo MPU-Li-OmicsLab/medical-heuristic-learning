@@ -180,10 +180,6 @@ Continuous learning runs may additionally write:
 - `continuous_learning_context.json`
 - `probe_univariate_results_prev.csv`
 - `probe_knowledge_prev.md`
-- `probe_knowledge_prompt.txt`
-- `v0_prompt.txt`
-- `v0_error_analysis.txt`
-- `v0_attempt_*.txt`
 
 ## Runtime Progress Output
 
@@ -301,7 +297,6 @@ Configuration for drift-aware continuous learning.
 | `univariate_top_k` | `int` | `30` | Number of top univariate features summarized. |
 | `random_seed` | `int` | `42` | Random seed used by the adaptation loop. |
 | `llm_enabled` | `bool` | `True` | Whether to initialize the LLM client. |
-| `write_prompt_artifacts` | `bool` | `True` | Configuration field currently present on the dataclass. |
 
 ### `ContinuousLearningResult`
 
