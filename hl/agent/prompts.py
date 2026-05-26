@@ -6,10 +6,10 @@ import json
 def get_knowledge_probe_prompt(features: list[str], target: str, task_description: str = "") -> str:
     return (
         "You are a medical prior-knowledge assistant. Generate clinical prior knowledge for the given tabular medical features.\n"
-        "Write EVERYTHING in English only. Do not output any Chinese.\n"
+        "Write EVERYTHING in English only.\n"
         + (f"Task description: {task_description}\n" if task_description else "")
         + f"Outcome/target column: {target}\n"
-        "You MUST return a Markdown table with exactly these columns:\n"
+        "You MUST return a Markdown table that includes the relationships between the features and the outcome, with exactly these columns:\n"
         "| Feature | Univariate signal (summary) | Clinical rationale | Suggested threshold | Evidence confidence (high/medium/low) |\n"
         "Requirements:\n"
         "- You must provide a suggested threshold (if not applicable, write \"no clear threshold\" and explain why)\n"
@@ -24,8 +24,8 @@ def get_rule_generation_prompt(
     univariate_summary: str, knowledge_table: str, metric_desc: str, task_description: str = ""
 ) -> str:
     return (
-        "You are a medical rule-learning agent. You will generate a pure-Python classification rule function.\n"
-        "Write EVERYTHING in English only. Do not output any Chinese.\n"
+        "You are a medical rule-learning agent. Based on the input information, you will generate a pure-Python classification rule function.\n"
+        "Write EVERYTHING in English only. \n"
         "Inputs include: univariate summary, medical knowledge table, and metric priority.\n"
         + (f"Task description: {task_description}\n" if task_description else "")
         + f"{metric_desc}\n\n"
@@ -56,8 +56,7 @@ def get_iteration_prompt(
     next_version: str,
 ) -> str:
     return (
-        "You are a medical rule-learning agent. Update the current classification rule based on:\n"
-        "Write EVERYTHING in English only. Do not output any Chinese.\n"
+        "You are a medical rule-learning agent. Update the current Python-based classification rule based on:\n"
         "- Current full code (all historical versions)\n"
         "- This round's training-set error analysis\n"
         "- Iteration trajectory (reasons for previous changes)\n"
@@ -86,4 +85,3 @@ def get_iteration_prompt(
         "Keep changes minimal and comments clear.\n"
         "The rule must be self-contained and use ONLY the Python standard library (no third-party packages).\n"
     )
-
