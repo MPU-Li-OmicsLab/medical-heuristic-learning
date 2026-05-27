@@ -18,7 +18,7 @@ class ContinuousLearningConfig:
     drift: DriftConfig = field(default_factory=DriftConfig)
     output_dir: Path | None = None
     iterations: int = 10
-    metric_priority: tuple[str, ...] = ("F1", "ACC")
+    metric_priority: tuple[str, ...] = ("F1", "ACC", "Sensitivity","Specificity")
     run_univariate_probe: bool = True
     run_knowledge_probe: bool = True
     run_v0_generation: bool = True

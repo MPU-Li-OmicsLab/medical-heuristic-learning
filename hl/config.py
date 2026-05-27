@@ -18,7 +18,7 @@ class LLMConfig:
 class RunConfig:
     output_dir: Path | None = None
     iterations: int = 10
-    metric_priority: tuple[str, ...] = ("F1", "ACC")
+    metric_priority: tuple[str, ...] = ("F1", "ACC", "Sensitivity","Specificity")
     train_baselines: bool = False
     run_univariate_probe: bool = True
     run_knowledge_probe: bool = True
