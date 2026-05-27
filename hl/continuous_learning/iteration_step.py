@@ -23,7 +23,7 @@ from hl.utils.progress import log_progress
 class IterationRecord:
     version: str
     error_analysis: str
-    metrics: dict[str, float]
+    metrics: dict[str, float | int]
 
 
 def _parse_proposal(text: str) -> ParsedProposal:

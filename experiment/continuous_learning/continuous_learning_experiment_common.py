@@ -155,10 +155,10 @@ def get_default_experiment_settings() -> ExperimentSettings:
     return ExperimentSettings(
         dataset=DatasetSpec("MIMIC", MIMIC_CSV_PATH, MIMIC_LABEL_COL, None),
         seeds=DEFAULT_SEEDS,
-        split_spec=SplitSpec(val_total=500, test_total=500),
+        split_spec=SplitSpec(val_total=500, test_total=800),
         stages=(
             StageSpec("stage1_train1000", 1000, STAGE1_FEATURE_COLS),
-            StageSpec("stage2_train10", 10, STAGE2_FEATURE_COLS),
+            StageSpec("stage2_train40", 40, STAGE2_FEATURE_COLS),
         ),
         output_root=OUTPUT_ROOT,
         stage1_change_note="Stage 1 uses the original baseline ICU feature set with SIRS available.",
@@ -199,14 +199,16 @@ def make_stage2_drift(settings: ExperimentSettings, prev_hl_out_dir: Path) -> Dr
     )
 
 
-def prepare_stage_data_bundle(
+def prepare_two_stage_data_bundles(
     *,
     ds: DatasetSpec,
-    drift: DriftConfig,
-    stage: StageSpec,
+    stage1_drift: DriftConfig,
+    stage2_drift: DriftConfig,
+    stage1: StageSpec,
+    stage2: StageSpec,
     seed: int,
     split_spec: SplitSpec,
-) -> StageDataBundle:
+) -> tuple[StageDataBundle, StageDataBundle]:
     df = _load_csv(ds.csv_path)
     if ds.label_col not in df.columns:
         raise ValueError(f"{ds.name}: label_col={ds.label_col} not found")
@@ -217,17 +219,73 @@ def prepare_stage_data_bundle(
         raise ValueError(f"Dataset contains reserved column name: {ROW_ID_COL}")
     df[ROW_ID_COL] = np.arange(len(df), dtype=int)
 
-    drifted_df, drift_meta = _apply_feature_drift(df, label_col=ds.label_col, drift=drift)
-    drifted_df = _select_stage_columns(drifted_df, label_col=ds.label_col, feature_cols=stage.feature_cols)
-    train_pool, val_df, test_df, split_meta = _split_val_test_balanced(drifted_df, ds.label_col, split_spec, seed=seed)
-    train_df, train_meta = _sample_train_balanced(
-        train_pool,
+    partition = _partition_two_stage_rows_balanced(
+        df=df,
         label_col=ds.label_col,
-        train_total=stage.train_total,
-        seed=seed + 1000,
+        stage1=stage1,
+        stage2=stage2,
         spec=split_spec,
+        seed=seed,
     )
+    stage1_bundle = _build_stage_bundle_from_partition(
+        ds=ds,
+        stage=stage1,
+        drift=stage1_drift,
+        seed=seed,
+        split_spec=split_spec,
+        raw_train_df=partition["stage1"]["train"],
+        raw_val_df=partition["stage1"]["val"],
+        raw_test_df=partition["stage1"]["test"],
+        partition_seed=int(partition["partition_seed"]),
+    )
+    stage2_bundle = _build_stage_bundle_from_partition(
+        ds=ds,
+        stage=stage2,
+        drift=stage2_drift,
+        seed=seed,
+        split_spec=split_spec,
+        raw_train_df=partition["stage2"]["train"],
+        raw_val_df=partition["stage2"]["val"],
+        raw_test_df=partition["stage2"]["test"],
+        partition_seed=int(partition["partition_seed"]),
+    )
+    return stage1_bundle, stage2_bundle
 
+
+def _build_stage_bundle_from_partition(
+    *,
+    ds: DatasetSpec,
+    stage: StageSpec,
+    drift: DriftConfig,
+    seed: int,
+    split_spec: SplitSpec,
+    raw_train_df: pd.DataFrame,
+    raw_val_df: pd.DataFrame,
+    raw_test_df: pd.DataFrame,
+    partition_seed: int,
+) -> StageDataBundle:
+    train_df, drift_meta = _apply_stage_view(raw_train_df, label_col=ds.label_col, drift=drift, feature_cols=stage.feature_cols)
+    val_df, _ = _apply_stage_view(raw_val_df, label_col=ds.label_col, drift=drift, feature_cols=stage.feature_cols)
+    test_df, _ = _apply_stage_view(raw_test_df, label_col=ds.label_col, drift=drift, feature_cols=stage.feature_cols)
+    split_meta = {
+        "split_seed": int(partition_seed),
+        "partition_strategy": "two_stage_disjoint_balanced",
+        "val_source_row_ids": _sorted_row_ids(raw_val_df),
+        "test_source_row_ids": _sorted_row_ids(raw_test_df),
+        "split_spec_obj": split_spec,
+    }
+    train_meta = {
+        "sampling_seed": int(partition_seed),
+        "sampling_strategy": "prepartitioned_two_stage_disjoint_balanced",
+        "train_total": int(stage.train_total),
+        "pos_target": int(stage.train_total // 2),
+        "neg_target": int(stage.train_total // 2),
+        "pos_available": int((raw_train_df[ds.label_col].astype(int) == split_spec.pos_value).sum()),
+        "neg_available": int((raw_train_df[ds.label_col].astype(int) == split_spec.neg_value).sum()),
+        "pos_replace": False,
+        "neg_replace": False,
+        "train_source_row_ids": _sorted_row_ids(raw_train_df),
+    }
     return StageDataBundle(
         dataset=ds.name,
         seed=seed,
@@ -302,21 +360,29 @@ def _load_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def _split_val_test_balanced(
+def _partition_two_stage_rows_balanced(
+    *,
     df: pd.DataFrame,
     label_col: str,
+    stage1: StageSpec,
+    stage2: StageSpec,
     spec: SplitSpec,
     seed: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+) -> dict:
+    if stage1.train_total % 2 != 0 or stage2.train_total % 2 != 0:
+        raise ValueError("Both stage train sizes must be even for 1:1 balanced partitioning")
+
     y = df[label_col].astype(int)
     pos_df = df.loc[y == spec.pos_value].copy()
     neg_df = df.loc[y == spec.neg_value].copy()
+    n_stage1_train_each = stage1.train_total // 2
+    n_stage2_train_each = stage2.train_total // 2
     n_val_each = spec.val_total // 2
     n_test_each = spec.test_total // 2
-    need_each = n_val_each + n_test_each
+    need_each = n_stage1_train_each + n_val_each + n_test_each + n_stage2_train_each + n_val_each + n_test_each
     if len(pos_df) < need_each or len(neg_df) < need_each:
         raise ValueError(
-            f"Not enough samples for balanced splits. Need pos>={need_each}, neg>={need_each}, "
+            f"Not enough samples for two-stage balanced partition. Need pos>={need_each}, neg>={need_each}, "
             f"got pos={len(pos_df)}, neg={len(neg_df)}"
         )
 
@@ -324,66 +390,51 @@ def _split_val_test_balanced(
     pos_idx = rng.permutation(pos_df.index.to_numpy(dtype=int))
     neg_idx = rng.permutation(neg_df.index.to_numpy(dtype=int))
 
-    def take(indices: np.ndarray, start: int, n_items: int) -> np.ndarray:
-        return indices[start : start + n_items]
+    def take(indices: np.ndarray, start: int, n_items: int) -> tuple[np.ndarray, int]:
+        return indices[start : start + n_items], start + n_items
 
-    pos_test = take(pos_idx, 0, n_test_each)
-    neg_test = take(neg_idx, 0, n_test_each)
-    pos_val = take(pos_idx, n_test_each, n_val_each)
-    neg_val = take(neg_idx, n_test_each, n_val_each)
+    def allocate_stage(indices: np.ndarray, start: int, n_train: int) -> tuple[dict[str, np.ndarray], int]:
+        train_idx, start = take(indices, start, n_train)
+        val_idx, start = take(indices, start, n_val_each)
+        test_idx, start = take(indices, start, n_test_each)
+        return {"train": train_idx, "val": val_idx, "test": test_idx}, start
 
-    test_df = pd.concat([pos_df.loc[pos_test], neg_df.loc[neg_test]], axis=0).sample(frac=1.0, random_state=seed)
-    val_df = pd.concat([pos_df.loc[pos_val], neg_df.loc[neg_val]], axis=0).sample(frac=1.0, random_state=seed + 1)
-    used_idx = set(pos_test.tolist()) | set(neg_test.tolist()) | set(pos_val.tolist()) | set(neg_val.tolist())
-    train_pool = df.loc[~df.index.isin(list(used_idx))].copy()
-    meta = {
-        "split_seed": int(seed),
-        "val_source_row_ids": _sorted_row_ids(val_df),
-        "test_source_row_ids": _sorted_row_ids(test_df),
-        "train_pool_source_row_ids": _sorted_row_ids(train_pool),
-        "split_spec_obj": spec,
+    pos_stage1, pos_cursor = allocate_stage(pos_idx, 0, n_stage1_train_each)
+    pos_stage2, pos_cursor = allocate_stage(pos_idx, pos_cursor, n_stage2_train_each)
+    neg_stage1, neg_cursor = allocate_stage(neg_idx, 0, n_stage1_train_each)
+    neg_stage2, neg_cursor = allocate_stage(neg_idx, neg_cursor, n_stage2_train_each)
+    assert pos_cursor <= len(pos_idx)
+    assert neg_cursor <= len(neg_idx)
+
+    def build_split(pos_split: np.ndarray, neg_split: np.ndarray, random_state: int) -> pd.DataFrame:
+        stage_df = pd.concat([pos_df.loc[pos_split], neg_df.loc[neg_split]], axis=0)
+        return stage_df.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
+
+    return {
+        "partition_seed": int(seed),
+        "stage1": {
+            "train": build_split(pos_stage1["train"], neg_stage1["train"], seed + 11),
+            "val": build_split(pos_stage1["val"], neg_stage1["val"], seed + 13),
+            "test": build_split(pos_stage1["test"], neg_stage1["test"], seed + 17),
+        },
+        "stage2": {
+            "train": build_split(pos_stage2["train"], neg_stage2["train"], seed + 19),
+            "val": build_split(pos_stage2["val"], neg_stage2["val"], seed + 23),
+            "test": build_split(pos_stage2["test"], neg_stage2["test"], seed + 29),
+        },
     }
-    return train_pool.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True), meta
 
 
-def _sample_train_balanced(
-    train_pool: pd.DataFrame,
+def _apply_stage_view(
+    df: pd.DataFrame,
     *,
     label_col: str,
-    train_total: int,
-    seed: int,
-    spec: SplitSpec,
+    drift: DriftConfig,
+    feature_cols: tuple[str, ...],
 ) -> tuple[pd.DataFrame, dict]:
-    if train_total <= 0:
-        raise ValueError("train_total must be positive")
-    if train_total % 2 != 0:
-        raise ValueError("train_total must be even for 1:1 balanced sampling")
-
-    pos_each = train_total // 2
-    neg_each = train_total // 2
-    y = train_pool[label_col].astype(int)
-    pos_pool = train_pool.loc[y == spec.pos_value].copy()
-    neg_pool = train_pool.loc[y == spec.neg_value].copy()
-    if len(pos_pool) == 0 or len(neg_pool) == 0:
-        raise ValueError(f"train_pool has no samples for one class. pos={len(pos_pool)}, neg={len(neg_pool)}")
-
-    pos_replace = len(pos_pool) < pos_each
-    neg_replace = len(neg_pool) < neg_each
-    pos_df = pos_pool.sample(n=pos_each, replace=pos_replace, random_state=seed + 11)
-    neg_df = neg_pool.sample(n=neg_each, replace=neg_replace, random_state=seed + 23)
-    train_df = pd.concat([pos_df, neg_df], axis=0).sample(frac=1.0, random_state=seed + 97).reset_index(drop=True)
-    meta = {
-        "sampling_seed": int(seed),
-        "train_total": int(train_total),
-        "pos_target": int(pos_each),
-        "neg_target": int(neg_each),
-        "pos_available": int(len(pos_pool)),
-        "neg_available": int(len(neg_pool)),
-        "pos_replace": bool(pos_replace),
-        "neg_replace": bool(neg_replace),
-        "train_source_row_ids": _sorted_row_ids(train_df),
-    }
-    return train_df, meta
+    drifted_df, drift_meta = _apply_feature_drift(df, label_col=label_col, drift=drift)
+    stage_df = _select_stage_columns(drifted_df, label_col=label_col, feature_cols=feature_cols)
+    return stage_df, drift_meta
 
 
 def _apply_feature_drift(df: pd.DataFrame, *, label_col: str, drift: DriftConfig) -> tuple[pd.DataFrame, dict]:

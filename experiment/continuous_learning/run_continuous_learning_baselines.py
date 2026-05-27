@@ -17,7 +17,6 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from continuous_learning_experiment_common import (
     DEFAULT_SEEDS,
-    DatasetSpec,
     MIMIC_CSV_PATH,
     MIMIC_LABEL_COL,
     ModelStageResult,
@@ -25,7 +24,7 @@ from continuous_learning_experiment_common import (
     build_stage1_drift,
     build_stage2_drift_template,
     get_default_experiment_settings,
-    prepare_stage_data_bundle,
+    prepare_two_stage_data_bundles,
     stage_bundle_manifest,
     write_results_csv,
 )
@@ -39,20 +38,16 @@ def run_baseline_experiments() -> list[ModelStageResult]:
 
     results: list[ModelStageResult] = []
     for seed in settings.seeds:
-        stage1_bundle = prepare_stage_data_bundle(
+        stage1_bundle, stage2_bundle = prepare_two_stage_data_bundles(
             ds=ds,
-            drift=build_stage1_drift(settings, ds.prev_hl_out_dir),
-            stage=settings.stages[0],
+            stage1_drift=build_stage1_drift(settings, ds.prev_hl_out_dir),
+            stage2_drift=build_stage2_drift_template(settings),
+            stage1=settings.stages[0],
+            stage2=settings.stages[1],
             seed=seed,
             split_spec=settings.split_spec,
         )
-        stage2_bundle = prepare_stage_data_bundle(
-            ds=ds,
-            drift=build_stage2_drift_template(settings),
-            stage=settings.stages[1],
-            seed=seed,
-            split_spec=settings.split_spec,
-        )
+        validation = _validate_stage_data(stage1_bundle=stage1_bundle, stage2_bundle=stage2_bundle)
         baseline_root = settings.output_root / ds.name / f"seed{seed}" / "baselines" / _timestamp()
         baseline_root.mkdir(parents=True, exist_ok=True)
         write_json(
@@ -63,6 +58,7 @@ def run_baseline_experiments() -> list[ModelStageResult]:
                 "data_flow": "shared_with_hl_via_continuous_learning_experiment_common",
                 "stage1": stage_bundle_manifest(stage1_bundle),
                 "stage2": stage_bundle_manifest(stage2_bundle),
+                "validation": validation,
             },
         )
         results.extend(
@@ -179,46 +175,37 @@ def _fit_baselines_two_stage(
             add_result(model_name, stage2_bundle.stage, None, "missing_dep", err, out_dir / model_name / stage2_bundle.stage)
         return results
 
-    def align(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-        out_df = df.copy()
-        for col in feature_cols:
-            if col not in out_df.columns:
-                out_df[col] = np.nan
-        keep_cols = list(feature_cols) + [label_col]
-        return out_df[[col for col in keep_cols if col in out_df.columns]].copy()
+    train1 = stage1_bundle.train_df.copy()
+    val1 = stage1_bundle.val_df.copy()
+    test1 = stage1_bundle.test_df.copy()
+    train2 = stage2_bundle.train_df.copy()
+    val2 = stage2_bundle.val_df.copy()
+    test2 = stage2_bundle.test_df.copy()
 
-    all_feature_cols = set()
-    for df in [
-        stage1_bundle.train_df,
-        stage1_bundle.val_df,
-        stage1_bundle.test_df,
-        stage2_bundle.train_df,
-        stage2_bundle.val_df,
-        stage2_bundle.test_df,
-    ]:
-        all_feature_cols |= {col for col in df.columns if col != label_col}
-    feature_cols = sorted(all_feature_cols)
-
-    train1 = align(stage1_bundle.train_df, feature_cols)
-    val1 = align(stage1_bundle.val_df, feature_cols)
-    test1 = align(stage1_bundle.test_df, feature_cols)
-    train2 = align(stage2_bundle.train_df, feature_cols)
-    val2 = align(stage2_bundle.val_df, feature_cols)
-    test2 = align(stage2_bundle.test_df, feature_cols)
-
-    x1, y1, meta = as_xy(train1)
-    xv1 = transform_with_meta(val1.drop(columns=[label_col]), meta)
-    xt1 = transform_with_meta(test1.drop(columns=[label_col]), meta)
+    x1, y1, meta1 = as_xy(train1)
+    xv1 = transform_with_meta(val1.drop(columns=[label_col]), meta1)
+    xt1 = transform_with_meta(test1.drop(columns=[label_col]), meta1)
     yt1 = test1[label_col].astype(int).to_numpy()
-    x2 = transform_with_meta(train2.drop(columns=[label_col]), meta)
-    y2 = train2[label_col].astype(int).to_numpy()
-    xv2 = transform_with_meta(val2.drop(columns=[label_col]), meta)
-    xt2 = transform_with_meta(test2.drop(columns=[label_col]), meta)
+    x2, y2, meta2 = as_xy(train2)
+    xv2 = transform_with_meta(val2.drop(columns=[label_col]), meta2)
+    xt2 = transform_with_meta(test2.drop(columns=[label_col]), meta2)
     yt2 = test2[label_col].astype(int).to_numpy()
 
-    baseline_dir = out_dir / "baselines"
+    baseline_dir = out_dir
     baseline_dir.mkdir(parents=True, exist_ok=True)
-    write_json(baseline_dir / "feature_meta.json", meta)
+    write_json(
+        baseline_dir / "feature_meta.json",
+        {
+            "stage1": {
+                "feature_cols": [col for col in train1.columns if col != label_col],
+                "encoding_meta": meta1,
+            },
+            "stage2": {
+                "feature_cols": [col for col in train2.columns if col != label_col],
+                "encoding_meta": meta2,
+            },
+        },
+    )
 
     def eval_pred(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         return compute_metrics(y_true, y_pred)
@@ -270,9 +257,23 @@ def _fit_baselines_two_stage(
         dt1 = DecisionTreeClassifier(random_state=seed, max_depth=None)
         dt1.fit(x1, y1)
         add_result("DecisionTree", stage1_bundle.stage, eval_pred(yt1, dt1.predict(xt1)), "ok", "", dt_s1_dir)
+        prior_train2 = dt1.predict(x2).reshape(-1, 1).astype(float)
+        prior_test2 = dt1.predict(xt2).reshape(-1, 1).astype(float)
+        x2_aug = np.concatenate([x2, prior_train2], axis=1)
+        xt2_aug = np.concatenate([xt2, prior_test2], axis=1)
         dt2 = DecisionTreeClassifier(random_state=seed + 1, max_depth=None)
-        dt2.fit(x2, y2)
-        add_result("DecisionTree", stage2_bundle.stage, eval_pred(yt2, dt2.predict(xt2)), "retrain", "", dt_s2_dir)
+        dt2.fit(x2_aug, y2)
+        add_result("DecisionTree", stage2_bundle.stage, eval_pred(yt2, dt2.predict(xt2_aug)), "continued", "", dt_s2_dir)
+        write_json(
+            dt_s2_dir / "continuation_meta.json",
+            {
+                "continuation_strategy": "augment_stage2_with_stage1_tree_prediction",
+                "prior_feature_name": "stage1_tree_prediction",
+                "stage1_feature_count": int(x1.shape[1]),
+                "stage2_feature_count_before_augmentation": int(x2.shape[1]),
+                "stage2_feature_count_after_augmentation": int(x2_aug.shape[1]),
+            },
+        )
     except Exception as exc:
         add_result("DecisionTree", stage1_bundle.stage, None, "error", str(exc), dt_s1_dir)
         add_result("DecisionTree", stage2_bundle.stage, None, "error", str(exc), dt_s2_dir)
@@ -491,6 +492,75 @@ def _fit_baselines_two_stage(
         add_result("FT-Transformer", stage2_bundle.stage, None, "missing_dep", str(exc), ft_s2_dir)
 
     return results
+
+
+def _validate_stage_data(*, stage1_bundle: StageDataBundle, stage2_bundle: StageDataBundle) -> dict:
+    if stage1_bundle.dataset != stage2_bundle.dataset:
+        raise ValueError("Stage1 and Stage2 datasets do not match")
+    if stage1_bundle.seed != stage2_bundle.seed:
+        raise ValueError("Stage1 and Stage2 seeds do not match")
+    if stage1_bundle.label_col != stage2_bundle.label_col:
+        raise ValueError("Stage1 and Stage2 label columns do not match")
+
+    stage1_features = [col for col in stage1_bundle.train_df.columns if col != stage1_bundle.label_col]
+    stage2_features = [col for col in stage2_bundle.train_df.columns if col != stage2_bundle.label_col]
+    if "SIRS" not in stage1_features:
+        raise ValueError("Stage1 features must include SIRS")
+    if "SOFA" in stage1_features:
+        raise ValueError("Stage1 features must not include SOFA")
+    if "SOFA" not in stage2_features:
+        raise ValueError("Stage2 features must include SOFA")
+    if "SIRS" in stage2_features:
+        raise ValueError("Stage2 features must not include SIRS")
+
+    expected_sizes = {
+        "stage1_train": 1000,
+        "stage1_val": 500,
+        "stage1_test": 800,
+        "stage2_train": 40,
+        "stage2_val": 500,
+        "stage2_test": 800,
+    }
+    actual_sizes = {
+        "stage1_train": len(stage1_bundle.train_df),
+        "stage1_val": len(stage1_bundle.val_df),
+        "stage1_test": len(stage1_bundle.test_df),
+        "stage2_train": len(stage2_bundle.train_df),
+        "stage2_val": len(stage2_bundle.val_df),
+        "stage2_test": len(stage2_bundle.test_df),
+    }
+    if actual_sizes != expected_sizes:
+        raise ValueError(f"Unexpected stage sizes: expected={expected_sizes}, got={actual_sizes}")
+
+    row_sets = {
+        "stage1_train": set(stage1_bundle.train_sampling_meta.get("train_source_row_ids") or []),
+        "stage1_val": set(stage1_bundle.split_meta.get("val_source_row_ids") or []),
+        "stage1_test": set(stage1_bundle.split_meta.get("test_source_row_ids") or []),
+        "stage2_train": set(stage2_bundle.train_sampling_meta.get("train_source_row_ids") or []),
+        "stage2_val": set(stage2_bundle.split_meta.get("val_source_row_ids") or []),
+        "stage2_test": set(stage2_bundle.split_meta.get("test_source_row_ids") or []),
+    }
+    empty_intersections: dict[str, bool] = {}
+    keys = list(row_sets.keys())
+    for idx, left in enumerate(keys):
+        for right in keys[idx + 1 :]:
+            overlap = row_sets[left] & row_sets[right]
+            if overlap:
+                raise ValueError(f"{left} and {right} overlap on source rows: {sorted(list(overlap))[:10]}")
+            empty_intersections[f"{left}__{right}"] = True
+
+    return {
+        "same_dataset": True,
+        "same_seed": True,
+        "same_label_col": True,
+        "sizes": actual_sizes,
+        "all_pairwise_source_row_intersections_empty": True,
+        "pairwise_disjoint_checks": empty_intersections,
+        "stage1_feature_cols": stage1_features,
+        "stage2_feature_cols": stage2_features,
+        "stage1_has_sirs_no_sofa": True,
+        "stage2_has_sofa_no_sirs": True,
+    }
 
 
 def _metric_text(metrics: dict, key: str) -> str:

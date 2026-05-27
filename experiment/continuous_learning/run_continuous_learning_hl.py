@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import traceback
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -23,14 +24,16 @@ from continuous_learning_experiment_common import (
     ModelStageResult,
     StageDataBundle,
     build_stage1_drift,
+    build_stage2_drift_template,
     get_default_experiment_settings,
     make_stage2_drift,
-    prepare_stage_data_bundle,
+    prepare_two_stage_data_bundles,
     stage_bundle_manifest,
     write_results_csv,
 )
-from hl.config import LLMConfig
+from hl.config import LLMConfig, RunConfig
 from hl.continuous_learning import ContinuousLearningConfig, run_continuous_learning
+from hl.orchestrator import run_heuristic_learning
 from hl.metrics import compute_metrics
 from hl.utils.io import write_json, write_text
 
@@ -52,11 +55,12 @@ def run_hl_experiments() -> list[ModelStageResult]:
     results: list[ModelStageResult] = []
     ds = settings.dataset
     for seed in settings.seeds:
-        stage1_drift = build_stage1_drift(settings, ds.prev_hl_out_dir)
-        stage1_bundle = prepare_stage_data_bundle(
+        stage1_bundle, stage2_bundle_template = prepare_two_stage_data_bundles(
             ds=ds,
-            drift=stage1_drift,
-            stage=settings.stages[0],
+            stage1_drift=build_stage1_drift(settings, ds.prev_hl_out_dir),
+            stage2_drift=build_stage2_drift_template(settings),
+            stage1=settings.stages[0],
+            stage2=settings.stages[1],
             seed=seed,
             split_spec=settings.split_spec,
         )
@@ -68,13 +72,9 @@ def run_hl_experiments() -> list[ModelStageResult]:
         )
         results.append(stage1_result)
 
-        stage2_drift = make_stage2_drift(settings, stage1_out_dir)
-        stage2_bundle = prepare_stage_data_bundle(
-            ds=ds,
-            drift=stage2_drift,
-            stage=settings.stages[1],
-            seed=seed,
-            split_spec=settings.split_spec,
+        stage2_bundle = replace(
+            stage2_bundle_template,
+            drift=make_stage2_drift(settings, stage1_out_dir),
         )
         stage2_result, _stage2_out_dir = _run_hl_stage(
             ds=ds,
@@ -106,26 +106,49 @@ def _run_hl_stage(
     manifest["task_description"] = task_description
     write_json(out_dir / "adaptation_spec.json", manifest)
 
-    continuous_cfg = ContinuousLearningConfig(
-        output_dir=out_dir,
-        run_univariate_probe=True,
-        run_knowledge_probe=True,
-        run_v0_generation=True,
-        run_iterations=True,
-        task_description=task_description,
-        random_seed=int(bundle.seed),
-        llm_enabled=True,
-        drift=bundle.drift,
-    )
-    result = run_continuous_learning(
-        train_df=bundle.train_df,
-        test_df=bundle.val_df,
-        label_col=ds.label_col,
-        llm_cfg=llm_cfg,
-        continuous_cfg=continuous_cfg,
-    )
+    if bundle.stage == "stage1_train1000":
+        run_cfg = RunConfig(
+            output_dir=out_dir,
+            run_univariate_probe=True,
+            run_knowledge_probe=True,
+            run_v0_generation=True,
+            run_iterations=True,
+            task_description=task_description,
+            random_seed=int(bundle.seed),
+            llm_enabled=True,
+        )
+        run_heuristic_learning(
+            train_df=bundle.train_df,
+            test_df=bundle.val_df,
+            label_col=ds.label_col,
+            run_cfg=run_cfg,
+            llm_cfg=llm_cfg,
+        )
+        heuristic_path = out_dir / "heuristic_system.py"
+        final_model_path = out_dir / "final_heuristic_model.py"
+    else:
+        continuous_cfg = ContinuousLearningConfig(
+            output_dir=out_dir,
+            run_univariate_probe=True,
+            run_knowledge_probe=True,
+            run_v0_generation=True,
+            run_iterations=True,
+            task_description=task_description,
+            random_seed=int(bundle.seed),
+            llm_enabled=True,
+            drift=bundle.drift,
+        )
+        result = run_continuous_learning(
+            train_df=bundle.train_df,
+            test_df=bundle.val_df,
+            label_col=ds.label_col,
+            llm_cfg=llm_cfg,
+            continuous_cfg=continuous_cfg,
+        )
+        heuristic_path = result.heuristic_path
+        final_model_path = result.final_model_path
 
-    predict_fn = _load_predict_fn(result.final_model_path)
+    predict_fn = _load_predict_fn(final_model_path)
     y_true = bundle.test_df[ds.label_col].astype(int).to_numpy()
     y_pred = _predict_labels(predict_fn, bundle.test_df, label_col=ds.label_col)
     metrics = compute_metrics(y_true, y_pred)
@@ -139,8 +162,9 @@ def _run_hl_stage(
                 "model_name": llm_cfg.model_name,
                 "api_key_env": llm_cfg.api_key_env,
             },
-            "heuristic_path": str(result.heuristic_path),
-            "final_model_path": str(result.final_model_path),
+            "executor": "hl.orchestrator" if bundle.stage == "stage1_train1000" else "hl.continuous_learning",
+            "heuristic_path": str(heuristic_path),
+            "final_model_path": str(final_model_path),
         },
     )
     write_text(
@@ -150,9 +174,10 @@ def _run_hl_stage(
                 f"dataset={ds.name}",
                 f"seed={bundle.seed}",
                 f"stage={bundle.stage}",
+                f"executor={'hl.orchestrator' if bundle.stage == 'stage1_train1000' else 'hl.continuous_learning'}",
                 f"prev_hl_out_dir={prev_dir_text}",
                 f"heldout_test_metrics={metrics}",
-                f"final_model_path={result.final_model_path}",
+                f"final_model_path={final_model_path}",
             ]
         )
         + "\n",
@@ -174,35 +199,24 @@ def _run_hl_stage(
 
 
 def _build_task_description(*, ds: DatasetSpec, bundle: StageDataBundle) -> str:
-    if ds.name == "MIMIC":
-        if bundle.stage == "stage1_train1000":
-            return (
-                "You are building a prediction model for 28-day mortality. The data are derived from baseline "
-                "information collected when patients are admitted to the ICU in the MIMIC database. The prediction "
-                "target is 28-day death, and the rule should be designed to capture clinically meaningful risk "
-                "patterns present at ICU admission."
-            )
-        if bundle.stage == "stage2_train10":
-            return (
-                "Due to changes in sepsis assessment guidelines, the SIRS index has been replaced by the SOFA "
-                "index. The prediction model for 28-day mortality therefore needs to be reconstructed under this "
-                "feature shift. The data still describe baseline information collected at ICU admission in the "
-                "MIMIC database, and the updated rule should adapt to this change while continuing to predict "
-                "28-day death in a clinically meaningful way."
-            )
-
+    if ds.name != "MIMIC":
+        raise ValueError(f"Only MIMIC task descriptions are supported, got dataset={ds.name}")
     if bundle.stage == "stage1_train1000":
         return (
-            f"You are building a prediction model for the outcome `{ds.label_col}`. The data are derived from "
-            f"baseline information collected in the `{ds.name}` dataset. The rule should be designed to capture "
-            "clinically meaningful risk patterns in the available baseline features."
+            "You are building a prediction model for 28-day mortality. The data are derived from baseline "
+            "information collected when patients are admitted to the ICU in the MIMIC database. The prediction "
+            "target is 28-day death, and the rule should be designed to capture clinically meaningful risk "
+            "patterns present at ICU admission."
         )
-
-    return (
-        f"Feature drift has occurred in the `{ds.name}` dataset, and the prediction model for the outcome "
-        f"`{ds.label_col}` needs to be updated accordingly. The revised rule should adapt to the changed feature "
-        "set while continuing to capture clinically meaningful risk patterns from the available baseline data."
-    )
+    if bundle.stage == "stage2_train40":
+        return (
+            "Due to changes in sepsis assessment guidelines, the SIRS index has been replaced by the SOFA "
+            "index. The prediction model for 28-day mortality therefore needs to be reconstructed under this "
+            "feature shift. The data still describe baseline information collected at ICU admission in the "
+            "MIMIC database, and the updated rule should adapt to this change while continuing to predict "
+            "28-day death in a clinically meaningful way."
+        )
+    raise ValueError(f"Unsupported stage for MIMIC task description: {bundle.stage}")
 
 
 def _load_predict_fn(model_path: Path):
