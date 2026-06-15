@@ -9,3 +9,6 @@ out*/
 uv.lock
 temp/
 example_out0/
+example_out_continuous_learning/
+*.csv
+AGENTS.md
