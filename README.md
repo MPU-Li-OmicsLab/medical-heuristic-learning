@@ -4,92 +4,140 @@ Reference: [Learning Beyond Gradients](https://trinkle23897.github.io/learning-b
 
 [中文文档](./README-CN.md)
 
-## Overview
+## Abstract
 
-Medical Heuristic Learning is a lightweight framework for building executable Python rule systems on clinical tabular data.
-Instead of treating neural network weights as the main artifact, the project combines statistical probes, LLM-assisted
-knowledge extraction, and iterative code editing to produce versioned heuristic functions such as `predict_v0`,
-`predict_v1`, and a final exported `predict(features) -> int`.
+Predictive modeling for clinical tabular data is central to clinical decision support and therefore requires not only strong predictive performance but also transparent decision logic. Although deep learning and tree-based ensemble methods can achieve high accuracy, their black-box nature remains a major obstacle to clinical deployment. This challenge is further compounded by common characteristics of medical data, including limited sample sizes, severe class imbalance, and feature evolution arising from changes in diagnostic criteria and clinical documentation. To address these issues, we propose Medical Heuristic Learning (MHL), an instantiation of the learning-beyond-gradients paradigm for clinical tabular prediction. Instead of relying on neural network weight updates, MHL uses a large language model (LLM)-driven workflow that integrates statistical probes, medical knowledge probes, rule synthesis, and code-level iterative refinement to optimize a deterministic and executable decision system. The resulting model is expressed not as opaque parameters, but as versioned pure-Python decision rules that are explicitly interpretable, fully auditable, and clinically grounded. MHL also supports continual learning by starting from previously validated rules and iteratively revising them using updated feature information under data drift or feature evolution. Comprehensive experiments on medical datasets show that MHL achieves performance comparable to state-of-the-art methods while maintaining strong behavior in small-sample and highly imbalanced settings. The results further indicate that this explicit rule update mechanism can help alleviate catastrophic forgetting under feature evolution. Overall, these findings suggest that non-gradient-based heuristic systems offer a transparent and adaptable alternative for high-stakes clinical decision support.
 
-The repository currently contains:
+![Medical Heuristic Learning Overview](./supporting_files/fig1.jpg)
 
-- A main heuristic learning pipeline in `hl/orchestrator/`
-- A continuous learning pipeline for feature drift adaptation in `hl/continuous_learning/`
-- End-to-end example scripts in the repository root
-- Experiment suites in `experiment/`
+## What This Repository Implements
 
-## Core Workflow
+Medical Heuristic Learning (MHL) is a lightweight framework for clinical tabular prediction whose main artifact is executable rule code rather than learned weights. The core `hl/` package combines:
 
-The default heuristic learning workflow is:
+- univariate statistical probes over the training set,
+- optional LLM-based medical knowledge probes,
+- LLM synthesis of an initial `predict_v0(features: dict) -> int`,
+- iterative code-level refinement using sampled training errors and regression warnings,
+- export of a stable `predict(features: dict) -> int` entrypoint.
 
-1. Run a univariate statistical probe on the training data.
-2. Optionally query an LLM for medical prior knowledge about the features.
-3. Generate an initial rule function `predict_v0`.
-4. Iteratively refine the rule system using training errors and regression feedback.
-5. Export the best rule version as `final_heuristic_model.py`.
+The framework also includes a continuous learning path for feature drift. Instead of rebuilding from scratch, it starts from a previous HL output directory, carries forward prior rule logic, and adapts the rule system under dropped, added, or renamed features.
 
-The continuous learning workflow extends this process to feature drift settings:
+## Experimental Findings
 
-1. Load the previous HL output directory.
-2. Update univariate and knowledge probe artifacts under the new feature space.
-3. Generate a drift-aware new `predict_v0` using the previous final model as blueprint.
-4. Reuse the same iterative optimization loop to adapt the rule system.
-5. Export a new final heuristic model for the shifted environment.
+Based on comprehensive evaluations across multiple medical datasets—including UK Biobank (UKB), Critical Care Information Database (CCID), and Medical Information Mart for Intensive Care (MIMIC)—and compared against representative baselines (Logistic Regression, Decision Tree, XGBoost, LightGBM, MLP, FT-Transformer), MHL demonstrated several key advantages:
+
+- **Robustness in Small-Sample Settings**: MHL consistently outperforms black-box baselines in low-resource regimes (e.g., $n < 100$). When labeled data are scarce, medically informed priors and explicit rule structures compensate for the fragility of purely statistical learners.
+- **Resilience to Extreme Class Imbalance**: Under highly skewed distributions (e.g., 50:1 or 1:50), many black-box models collapse into near-one-sided predictions. MHL maintains a workable balance between minority-class detection and majority-class control, guided by explicit error analysis and degradation warnings.
+- **Continual Learning without Catastrophic Forgetting**: When the feature space evolves (e.g., transitioning from SIRS to SOFA criteria in sepsis assessment), traditional models suffer severe performance degradation. MHL adapts by explicitly identifying obsolete features and incorporating new signals through code-level rule revisions, avoiding the catastrophic forgetting associated with overwriting hidden parameters.
+- **Probe Complementarity**: Ablation studies confirm that combining the statistical probe (for empirical signals) and the medical knowledge probe (for clinical priors and thresholds) yields the most stable and least failure-prone performance.
+- **LLM Backend Portability**: MHL remains highly effective across different foundation models (e.g., DeepSeek, Gemini, GPT, Qwen). The structured workflow limits hallucinations and ensures that the synthesized rules are deterministic and usable regardless of the specific backend.
+
+## Core Workflows
+
+### Standard Heuristic Learning
+
+`hl.orchestrator.run_heuristic_learning(...)` executes four stages:
+
+1. Run the univariate statistical probe on `train_df`.
+2. Run the knowledge probe if LLM usage is enabled.
+3. Generate `predict_v0` into `heuristic_system.py`.
+4. Iteratively append `predict_v1`, `predict_v2`, ... and export the best version as `final_heuristic_model.py`.
+
+The orchestrator validates that:
+
+- `label_col` exists in both `train_df` and `test_df`;
+- the train/test feature sets are identical after removing the label column.
+
+### Continuous Learning Under Drift
+
+`hl.continuous_learning.run_continuous_learning(...)` reuses the same four-stage structure, but with drift-aware semantics:
+
+1. Load the previous HL output directory described by `DriftConfig.prev_hl_out_dir`.
+2. Update univariate probe artifacts under the new feature space.
+3. Update the knowledge probe and preserve previous knowledge when possible.
+4. Generate a new drift-aware `predict_v0` from the previous final model blueprint and continue iterative refinement.
+
+Continuous learning additionally writes the drift context and previous probe snapshots to disk.
 
 ## Repository Layout
 
 - `hl/config.py`
-  Core runtime configuration objects: `LLMConfig` and `RunConfig`.
+  Standard runtime configuration dataclasses: `LLMConfig` and `RunConfig`.
 - `hl/orchestrator/`
-  Main heuristic learning orchestration entrypoint: `run_heuristic_learning(...)`.
+  Standard heuristic learning entrypoint and four stage implementations.
 - `hl/continuous_learning/`
-  Continuous learning entrypoint and drift-aware configuration: `run_continuous_learning(...)`.
+  Drift-aware configuration, entrypoint, and continuous learning stages.
 - `hl/probes/`
-  Univariate statistical probe and knowledge probe implementations.
+  Statistical and knowledge probe implementations.
+- `hl/agent/`
+  OpenAI-compatible client and prompt templates for standard and continuous workflows.
 - `hl/evolution/`
-  Iteration utilities, degradation detection, and error analysis helpers.
+  Error sampling, degradation detection, rule parsing, and syntax validation helpers.
+- `hl/metrics.py`
+  Metric computation and metric-priority prompt description generation.
+- `hl/utils/`
+  Thin wrappers for file output and terminal progress logging.
 - `example_training.py`
-  End-to-end training example on `./data/YHD_bicarbonate.csv`, writing outputs to `./example_out`.
+  End-to-end training example on `./data/YHD_bicarbonate.csv`, writing to `./example_out`.
 - `example_inference.py`
   Inference example that loads `./example_out/final_heuristic_model.py`.
 - `example_continuous_learning.py`
-  Continuous learning example that simulates feature removal and writes outputs to `./example_out_continuous_learning`.
+  Continuous learning example that drops the `wbc` feature and writes to `./example_out_continuous_learning`.
 - `experiment/`
-  Experiment suites for ablation studies, model comparisons, and continuous learning experiments.
+  Experiment suites separated from the reusable `hl/` core.
+
+## Artifact Contracts
+
+The generated rule files are not arbitrary outputs; downstream scripts assume specific conventions.
+
+### `heuristic_system.py`
+
+- starts with `CURRENT_VERSION = 'v0'` when first created;
+- contains versioned rule functions such as `predict_v0`, `predict_v1`, `predict_v2`;
+- may contain `ERROR_ANALYSIS_predict_vX` strings for each accepted version;
+- is updated incrementally by appending new versions rather than rewriting history.
+
+### `final_heuristic_model.py`
+
+- contains `FINAL_VERSION = "vX"`;
+- embeds the accumulated rule code;
+- exposes a stable `predict(features: dict) -> int` entrypoint that forwards to `predict_vX`.
 
 ## Installation
 
 Requirements:
 
 - Python `>=3.11`
-- Recommended package manager: `uv`
+- recommended package manager: `uv`
 
-Install runtime dependencies:
+Install the base dependency set:
 
 ```bash
 uv sync
 ```
 
-Install development and experiment dependencies as well:
+Install the full dependency set used by examples and experiments:
 
 ```bash
 uv sync --group dev
 ```
 
-Current dependency groups:
+Current dependency groups in `pyproject.toml` are:
 
-- Runtime: `numpy`, `openai`, `pandas`, `scipy`
-- Dev/experiments: `scikit-learn`, `lightgbm`, `torch`, `xgboost`
+- runtime: `numpy`, `openai`, `pandas`, `scipy`
+- dev: `scikit-learn`, `lightgbm`, `torch`, `xgboost`
+
+Practical note: the current core metric implementation in `hl/metrics.py` imports `scikit-learn`, so full end-to-end training and continuous learning runs require the `dev` group as the code exists today.
 
 ## Quick Start
 
-Set the API key through an environment variable:
+Set the API key:
 
 ```bash
 export DEEPSEEK_API_KEY="your-api-key"
 ```
 
-Run the basic training example:
+Run the standard example:
 
 ```bash
 uv run python example_training.py
@@ -107,7 +155,18 @@ Run the continuous learning example:
 uv run python example_continuous_learning.py
 ```
 
-Minimal direct usage:
+### What The Root Examples Do
+
+- `example_training.py`
+  loads `./data/YHD_bicarbonate.csv`, uses `hospital_expire_flag` as the label, takes rows `0:500` as train and `500:1000` as test, and writes to `./example_out`.
+- `example_inference.py`
+  loads `./example_out/final_heuristic_model.py` and runs inference on the last 5 rows of `./data/YHD_bicarbonate.csv`.
+- `example_continuous_learning.py`
+  reuses `./example_out`, removes the `wbc` feature to simulate drift, and writes results to `./example_out_continuous_learning`.
+
+## Minimal Usage
+
+### Standard Workflow
 
 ```python
 from hl.config import LLMConfig, RunConfig
@@ -115,7 +174,7 @@ from hl.orchestrator import run_heuristic_learning
 
 run_cfg = RunConfig()
 llm_cfg = LLMConfig(
-    api_key="your-api-key",  # optional; falls back to api_key_env when omitted
+    api_key="your-api-key",  # optional; otherwise read from api_key_env
 )
 
 run_heuristic_learning(
@@ -127,7 +186,7 @@ run_heuristic_learning(
 )
 ```
 
-Minimal continuous learning usage:
+### Continuous Learning Workflow
 
 ```python
 from pathlib import Path
@@ -158,14 +217,17 @@ print(result.out_dir)
 print(result.final_model_path)
 ```
 
-## Example Outputs
+## Outputs
 
-The root example scripts currently write to:
+When `RunConfig.output_dir is None`, the standard workflow writes to:
 
-- `example_training.py` -> `./example_out`
-- `example_continuous_learning.py` -> `./example_out_continuous_learning`
+- `./out/<timestamp>/`
 
-Typical heuristic learning artifacts include:
+When `ContinuousLearningConfig.output_dir is None`, the continuous workflow writes to:
+
+- `./out/<timestamp>_continuous_learning/`
+
+Typical standard HL artifacts are:
 
 - `probe_univariate_results.csv`
 - `probe_knowledge.md`
@@ -175,72 +237,84 @@ Typical heuristic learning artifacts include:
 - `final_heuristic_model.py`
 - `final_comparison.txt`
 
-Continuous learning runs may additionally write:
+Continuous learning additionally writes:
 
 - `continuous_learning_context.json`
 - `probe_univariate_results_prev.csv`
 - `probe_knowledge_prev.md`
 
-## Runtime Progress Output
+## Runtime Behavior
 
-The main `hl/` pipeline now emits stage progress to stdout while running.
-Typical messages include:
+The main `hl/` pipeline prints stage progress to stdout. Typical messages include:
 
-- Start and finish of the overall run
-- Output directory resolution
-- Univariate probe, knowledge probe, v0 generation, and iteration stage boundaries
-- Iteration-level progress, retry failures, accepted versions, and regression warnings
+- run start and finish;
+- resolved output directory;
+- stage boundaries for univariate probe, knowledge probe, v0 generation, and iterations;
+- retry failures, accepted versions, and detected regression examples.
 
-This makes long LLM-driven runs easier to monitor from the terminal.
+This is implemented by `hl/utils/progress.py` and is enabled by default.
+
+## Prompt And Rule Constraints
+
+The current prompt templates in `hl/agent/prompts.py` and `hl/agent/continuous_prompts.py` enforce the following constraints:
+
+- LLM output text must be in English.
+- v0 generation and iterative refinement both return strict JSON.
+- generated rules must be self-contained pure Python;
+- generated rules may use only the Python standard library;
+- every `if`/`elif`/`else` branch must include an English comment explaining the medical rationale or design intent;
+- iterative updates should be minimal rather than full rewrites.
+
+The code validates JSON structure, Python syntax, and required function names before accepting a proposal.
 
 ## API Summary
 
 ### `LLMConfig`
 
-Configuration for the OpenAI-compatible LLM backend.
+Configuration for the OpenAI-compatible backend.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `base_url` | `str` | `"https://api.deepseek.com/v1"` | Base URL for the API service. |
-| `api_key` | `str | None` | `None` | Directly provided API key. If set, it takes priority. |
+| `base_url` | `str` | `"https://api.deepseek.com/v1"` | API base URL. |
+| `api_key` | `str \| None` | `None` | Directly provided API key. If present, it takes priority. |
 | `api_key_env` | `str` | `"DEEPSEEK_API_KEY"` | Environment variable name used when `api_key` is absent. |
-| `model_name` | `str` | `"deepseek-v4-pro"` | Chat model name. |
+| `model_name` | `str` | `"deepseek-v4-pro"` | Model name passed to the OpenAI-compatible client. |
 | `temperature` | `float` | `0.3` | Sampling temperature. |
-| `extra_body` | `dict | None` | `None` | Optional extra request payload for backend-specific features. |
+| `extra_body` | `dict \| None` | `None` | Optional backend-specific extra request payload. |
 
 Key resolution behavior:
 
-- If `api_key` is provided, it is used directly.
-- Otherwise, the framework reads the environment variable named by `api_key_env`.
-- If LLM is enabled and no key is available, client initialization raises an error.
+- use `api_key` if it is provided;
+- otherwise read the environment variable named by `api_key_env`;
+- if LLM usage is enabled and neither is available, client construction raises an error.
 
 ### `RunConfig`
 
-Configuration for the standard heuristic learning pipeline.
+Configuration for standard heuristic learning.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `output_dir` | `Path | None` | `None` | Output directory. If `None`, the framework creates `./out/<timestamp>/` from the current working directory. |
-| `iterations` | `int` | `10` | Maximum number of refinement rounds. |
-| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC")` | Ordered metric priority for final model selection. |
+| `output_dir` | `Path \| None` | `None` | If `None`, writes to `./out/<timestamp>/`. |
+| `iterations` | `int` | `10` | Maximum number of iterative refinement rounds. |
+| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC", "Sensitivity", "Specificity")` | Ordered metric priority for final selection and prompt guidance. |
 | `train_baselines` | `bool` | `False` | Reserved field; not used by the main orchestrator. |
-| `run_univariate_probe` | `bool` | `True` | Whether to run the univariate probe. |
-| `run_knowledge_probe` | `bool` | `True` | Whether to run the LLM-based knowledge probe. |
-| `run_v0_generation` | `bool` | `True` | Whether to generate `predict_v0` when no heuristic file exists. |
-| `run_iterations` | `bool` | `True` | Whether to run iterative rule refinement. |
-| `max_error_samples` | `int` | `100` | Maximum number of sampled training errors for prompts. |
-| `max_error_details` | `int` | `40` | Maximum number of detailed error examples in prompts. |
-| `degradation_threshold` | `int` | `10` | Reserved field; not currently enforced in the main path. |
-| `degradation_rate` | `float` | `0.05` | Reserved field; not currently enforced in the main path. |
-| `degradation_max_examples` | `int` | `30` | Maximum number of regression examples added to the context. |
-| `max_llm_attempts` | `int` | `4` | Maximum retry count for parse or validation failures. |
-| `task_description` | `str` | `""` | Free-form task description injected into prompts. |
+| `run_univariate_probe` | `bool` | `True` | Whether to compute the univariate probe. |
+| `run_knowledge_probe` | `bool` | `True` | Whether to query the LLM knowledge probe. |
+| `run_v0_generation` | `bool` | `True` | Whether to generate `predict_v0` if no heuristic file exists. |
+| `run_iterations` | `bool` | `True` | Whether to run iterative refinement. |
+| `max_error_samples` | `int` | `100` | Maximum sampled training errors per iteration. |
+| `max_error_details` | `int` | `40` | Maximum detailed error samples included in the prompt. |
+| `degradation_threshold` | `int` | `10` | Reserved field; currently not enforced directly. |
+| `degradation_rate` | `float` | `0.05` | Reserved field; currently not enforced directly. |
+| `degradation_max_examples` | `int` | `30` | Maximum regression examples written into the next prompt context. |
+| `max_llm_attempts` | `int` | `4` | Maximum retry count for parsing or validation failures. |
+| `task_description` | `str` | `""` | Free-form task description inserted into prompts. |
 | `enable_auto_patch` | `bool` | `False` | Reserved field for future patch workflows. |
-| `max_specificity_drop` | `float` | `1.0` | Reserved acceptance-policy field. |
-| `max_acc_drop` | `float` | `1.0` | Reserved acceptance-policy field. |
-| `univariate_top_k` | `int` | `30` | Number of top univariate features summarized into prompts. |
-| `knowledge_top_k` | `int` | `20` | Reserved field; not currently enforced directly in the main orchestrator. |
-| `random_seed` | `int` | `42` | Random seed for sampling error and degradation examples. |
+| `max_specificity_drop` | `float` | `1.0` | Reserved field. |
+| `max_acc_drop` | `float` | `1.0` | Reserved field. |
+| `univariate_top_k` | `int` | `30` | Number of top univariate rows summarized into prompts. |
+| `knowledge_top_k` | `int` | `20` | Reserved field; currently not enforced directly. |
+| `random_seed` | `int` | `42` | Random seed used for error and degradation sampling. |
 | `llm_enabled` | `bool` | `True` | Whether to initialize the LLM client and run LLM-dependent steps. |
 
 ### `run_heuristic_learning`
@@ -257,23 +331,23 @@ def run_heuristic_learning(
 
 Behavior summary:
 
-- Validates the label column and feature-set consistency.
-- Resolves the output directory.
-- Runs probe -> v0 generation -> iterative optimization.
-- Writes all artifacts to disk.
-- Exports `final_heuristic_model.py` using the best version under `metric_priority`.
+- validates label and feature-set consistency;
+- resolves the output directory;
+- runs univariate probe, knowledge probe, v0 generation, and iterations;
+- writes iteration logs and artifact files;
+- exports `final_heuristic_model.py` using the best recorded version under `metric_priority`.
 
 ### `DriftConfig`
 
-Configuration describing schema or feature drift for continuous learning.
+Configuration for schema or feature drift.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `dropped_cols` | `tuple[str, ...]` | `()` | Features removed in the new environment. |
 | `added_cols` | `tuple[str, ...]` | `()` | New or restored features. |
 | `renamed_cols` | `tuple[tuple[str, str], ...]` | `()` | Feature rename mapping `(old_name, new_name)`. |
-| `change_note` | `str` | `""` | Natural-language drift description. |
-| `prev_hl_out_dir` | `Path | None` | `None` | Previous HL output directory used as adaptation context. |
+| `change_note` | `str` | `""` | Free-form natural-language drift description. |
+| `prev_hl_out_dir` | `Path \| None` | `None` | Previous HL output directory used as adaptation context. |
 
 ### `ContinuousLearningConfig`
 
@@ -282,19 +356,19 @@ Configuration for drift-aware continuous learning.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `drift` | `DriftConfig` | `DriftConfig()` | Drift specification. |
-| `output_dir` | `Path | None` | `None` | Output directory. If `None`, the framework creates `./out/<timestamp>_continuous_learning/`. |
+| `output_dir` | `Path \| None` | `None` | If `None`, writes to `./out/<timestamp>_continuous_learning/`. |
 | `iterations` | `int` | `10` | Maximum refinement rounds. |
-| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC")` | Metric priority used for final selection. |
+| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC", "Sensitivity", "Specificity")` | Ordered metric priority for final selection and prompt guidance. |
 | `run_univariate_probe` | `bool` | `True` | Whether to update the univariate probe. |
 | `run_knowledge_probe` | `bool` | `True` | Whether to update the knowledge probe. |
-| `run_v0_generation` | `bool` | `True` | Whether to generate a new drift-aware `v0`. |
+| `run_v0_generation` | `bool` | `True` | Whether to generate a new drift-aware `predict_v0`. |
 | `run_iterations` | `bool` | `True` | Whether to run iterative adaptation. |
 | `max_error_samples` | `int` | `100` | Maximum sampled training errors per iteration. |
-| `max_error_details` | `int` | `40` | Maximum detailed error examples in prompts. |
+| `max_error_details` | `int` | `40` | Maximum detailed error samples included in the prompt. |
 | `degradation_max_examples` | `int` | `30` | Maximum regression examples retained for prompts. |
 | `max_llm_attempts` | `int` | `4` | Maximum retry count for LLM output validation. |
-| `task_description` | `str` | `""` | Task description for prompts. |
-| `univariate_top_k` | `int` | `30` | Number of top univariate features summarized. |
+| `task_description` | `str` | `""` | Task description injected into prompts. |
+| `univariate_top_k` | `int` | `30` | Number of top updated univariate rows summarized. |
 | `random_seed` | `int` | `42` | Random seed used by the adaptation loop. |
 | `llm_enabled` | `bool` | `True` | Whether to initialize the LLM client. |
 
@@ -304,7 +378,7 @@ Return object from `run_continuous_learning(...)`.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `out_dir` | `Path` | Output directory of the continuous learning run. |
+| `out_dir` | `Path` | Output directory for the continuous learning run. |
 | `heuristic_path` | `Path` | Path to the adapted `heuristic_system.py`. |
 | `final_model_path` | `Path` | Path to the exported final model. |
 
@@ -323,32 +397,51 @@ def run_continuous_learning(
 
 Behavior summary:
 
-- Validates the new train/test dataframes and label column.
-- Records drift context to disk.
-- Updates probe artifacts under the new feature space.
-- Builds a new drift-aware `predict_v0` using the previous final model as blueprint.
-- Reuses the standard iteration loop for subsequent refinement.
-- Returns paths to the generated artifacts.
+- validates label and feature-set consistency in the new environment;
+- writes `continuous_learning_context.json`;
+- updates univariate and knowledge probe artifacts under drift;
+- builds a new drift-aware `predict_v0` using the previous final model blueprint;
+- reuses the same iterative optimization pattern and returns the generated paths.
+
+## Probe Behavior
+
+### Univariate Probe
+
+`hl/probes/univariate.py` currently:
+
+- treats non-binary numeric features as continuous;
+- evaluates continuous features with point-biserial correlation and Mann-Whitney U, retaining the better p-value;
+- evaluates binary/categorical features with chi-square statistics when applicable;
+- records missing rate, summary statistics, and level counts;
+- sorts the final table by `p_value` and then `missing_rate`.
+
+### Knowledge Probe
+
+`hl/probes/knowledge.py` asks the LLM to return a Markdown table with exactly these columns:
+
+| Feature | Univariate signal (summary) | Clinical rationale | Suggested threshold | Evidence confidence (high/medium/low) |
+| --- | --- | --- | --- | --- |
 
 ## Experiments
 
-The `experiment/` directory contains experiment suites that are separate from the reusable `hl/` core:
+The `experiment/` directory is separate from the reusable `hl/` core. Current subdirectories are:
 
 - `experiment/ablation/`
-  Probe ablation studies on `UKB` and `YHD`.
+  probe and workflow ablation studies.
 - `experiment/contrast0/`
-  HL comparison across different LLM backends.
+  comparisons across LLM backends.
 - `experiment/contrast1/`
-  Comparisons focused on training-set size.
+  comparisons focused on training-set size.
 - `experiment/contrast2/`
-  Comparisons focused on training-set class ratio.
+  comparisons focused on class ratio.
 - `experiment/continuous_learning/`
-  Two-stage continuous learning experiments with baseline comparisons.
+  multi-stage continuous learning experiments and baseline comparisons.
 
-Each subdirectory contains its own README with dataset assumptions, commands, and output structure.
+Each experiment subdirectory contains its own README with dataset requirements and commands.
 
 ## Notes
 
-- If you want reproducible output locations, pass an explicit `output_dir`.
-- If `llm_enabled=False`, LLM-dependent steps cannot generate new rules unless the required artifacts already exist on disk.
-- The experiment scripts often require the `dev` dependency group.
+- Pass an explicit `output_dir` if you need stable artifact locations.
+- If `llm_enabled=False`, LLM-dependent steps can only proceed by reusing artifacts already present on disk.
+- If `run_univariate_probe=False` or `run_knowledge_probe=False`, the pipeline will try to reuse the corresponding cached files from the output directory.
+- Continuous learning preserves previous probe snapshots in `probe_univariate_results_prev.csv` and `probe_knowledge_prev.md`.
