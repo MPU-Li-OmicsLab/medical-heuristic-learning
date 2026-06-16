@@ -2,7 +2,7 @@
 
 参考引用：[Learning Beyond Gradients](https://trinkle23897.github.io/learning-beyond-gradients/)
 
-[English README](./README.md)
+[English README](./README.md) | [Arxiv Paper](https://arxiv.org/abs/2606.16337)
 
 ## 摘要
 

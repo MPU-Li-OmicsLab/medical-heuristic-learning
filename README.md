@@ -2,7 +2,7 @@
 
 Reference: [Learning Beyond Gradients](https://trinkle23897.github.io/learning-beyond-gradients/)
 
-[中文文档](./README-CN.md)
+[中文文档](./README-CN.md)  | [Arxiv Paper](https://arxiv.org/abs/2606.16337)
 
 ## Abstract
 
