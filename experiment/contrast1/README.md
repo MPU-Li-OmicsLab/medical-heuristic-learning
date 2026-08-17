@@ -1,5 +1,24 @@
 # contrast1：训练集规模对比实验
 
+## 统一重跑（当前正式入口）
+
+`run_contrast1_balance.py` 现按 `EXPERIMENT_EXTENSION_PLAN.md` 统一重跑十个普通模型：
+LogisticRegression、DecisionTree、MLP、XGBoost、LightGBM、DeepTab
+FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS。所有模型层自动类别
+平衡均关闭，训练数据在进入模型前构造成 1:1；HL 不重跑。
+
+正式种子为 `36 40 42`。UKB 的验证集/测试集各 1000 条，YHD 各 500 条，
+二者均为 1:1 且无重复。运行及断点续跑命令：
+
+```bash
+uv run python experiment/contrast1/run_contrast1_balance.py \
+  --models all --seeds 36 40 42 --resume
+```
+
+逐 seed 结果写入 `contrast1_balance_rerun_seed<seed>.csv`，模型、预测、指标和
+数据清单写入 `experiment/outputs_rerun/contrast1/`。以下内容保留用于说明旧脚本和
+历史输出；与本节冲突时以本节及扩展方案为准。
+
 本目录用于研究训练集规模变化对模型性能的影响。当前包含 3 个脚本：
 
 - `run_contrast1.py`：常规模型对比，训练集从剩余样本中随机抽样，不强制 1:1
