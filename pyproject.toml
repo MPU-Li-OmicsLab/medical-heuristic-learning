@@ -2,11 +2,11 @@
 name = "hl-medical"
 version = "1.1.0"
 description = "Medical Heuristic Learning"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "numpy>=2.4.5",
     "openai>=2.37.0",
-    "pandas>=3.0.3",
+    "pandas>=2.0.3,<3.0.0",
     "scipy>=1.17.1",
 ]
 
@@ -16,7 +16,20 @@ dev = [
     "lightgbm>=4.6.0",
     "torch>=2.3.0",
     "xgboost>=2.1.0",
+    "deeptab==2.0.0",
+    "interpret-core[aplr]==0.7.8",
+    "aplr==10.23.0",
+    "corels==1.1.29",
+    "cython>=3.0,<4",
+    "setuptools>=78.1.1,<80",
+    "wheel>=0.46.0",
 ]
 
 [tool.uv]
 package = false
+no-build-isolation-package = ["corels"]
+
+[[tool.uv.dependency-metadata]]
+name = "corels"
+version = "1.1.29"
+requires-dist = ["numpy"]
