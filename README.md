@@ -431,11 +431,16 @@ The `experiment/` directory is separate from the reusable `hl/` core. Current su
 - `experiment/contrast0/`
   comparisons across LLM backends.
 - `experiment/contrast1/`
-  comparisons focused on training-set size.
+  comparisons focused on training-set size; the current rerun uses ten ordinary
+  models, seeds 36/40/42, and no model-level automatic class balancing.
 - `experiment/contrast2/`
-  comparisons focused on class ratio.
+  comparisons focused on class ratio with the same ten-model configuration.
 - `experiment/continuous_learning/`
-  multi-stage continuous learning experiments and baseline comparisons.
+  multi-stage continuous learning experiments and baseline comparisons, including
+  prior-feature cascades for DeepTab FT-Transformer/ResNet, EBM, APLR, and CORELS.
+- `experiment/EXPERIMENT_EXTENSION_PLAN.md`
+  reproducible configuration, data-split contract, commands, and output contract
+  for the current comparison rerun. Existing HL results are reused rather than rerun.
 
 Each experiment subdirectory contains its own README with dataset requirements and commands.
 
