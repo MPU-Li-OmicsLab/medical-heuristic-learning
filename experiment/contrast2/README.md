@@ -1,5 +1,22 @@
 # contrast2：训练集正负比对比实验
 
+## 统一重跑（当前正式入口）
+
+`run_contrast2.py` 现统一重跑 LogisticRegression、DecisionTree、MLP、XGBoost、
+LightGBM、DeepTab FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS；
+HL 继续复用旧结果。类别比例只在训练数据采样阶段设置，模型层自动平衡全部关闭。
+
+正式种子为 `36 40 42`，训练总量为 `1000/3000`，九种正负比保持不变。YHD 的
+无重复验证集和测试集各缩为 500 条，UKB 各为 1000 条。运行命令：
+
+```bash
+uv run python experiment/contrast2/run_contrast2.py \
+  --models all --seeds 36 40 42 --resume
+```
+
+逐 seed 结果写入 `contrast2_rerun_seed<seed>.csv`，模型产物位于
+`experiment/outputs_rerun/contrast2/`。以下旧说明若与本节冲突，以本节及扩展方案为准。
+
 本目录用于研究训练集类别分布变化对模型表现的影响。和 `contrast1` 不同，`contrast2` 固定验证集与测试集为平衡划分，系统性改变训练集正负样本比例，并比较：
 
 - 常规监督学习基线模型
