@@ -1,5 +1,24 @@
 # Continuous Learning
 
+## 普通模型统一重跑（当前方案）
+
+普通 baseline 现统一为十个模型：LogisticRegression、DecisionTree、MLP、XGBoost、
+LightGBM、DeepTab FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS。
+随机种子固定为 `36、40、42`；Stage 1 为训练 1000、验证 500、测试 800，Stage 2
+为训练 40、验证 500、测试 800，全部在模型训练前构造成 1:1。HL 不重跑。
+
+五个新增模型在 Stage 2 使用 `prior_feature_cascade`；其中 CORELS 使用 0/1 先验，
+其余使用 Stage 1 正类概率。生成先验时只按特征名使用 Stage 1 兼容视图，缺失的
+SIRS 由 Stage 1 训练统计量填充，并忽略 Stage 2 的 SOFA。
+
+```bash
+uv run python experiment/continuous_learning/run_continuous_learning_baselines.py \
+  --models all --seeds 36 40 42 --resume
+```
+
+结果写入 `continuous_baselines_rerun_results.csv`，产物位于
+`experiment/outputs_rerun/continuous_learning/`。旧的 baseline 与 HL CSV 均不覆盖。
+
 本目录现在位于 `experiment/continuous_learning/`，用于保存持续学习相关文档与实验输出；持续学习启发式学习的代码主干位于 `hl/continuous_learning/`。实验脚本已拆分为共享数据流模块、HL 持续学习脚本、Baseline 对比脚本和总控入口脚本。
 
 ## 新结构
@@ -125,15 +144,14 @@ result = run_continuous_learning(
   Stage1 使用 `SIRS`，Stage2 删除 `SIRS` 并增加 `SOFA`。
 - 应用两阶段特征漂移。
 - 做平衡抽样：
-  Stage1 训练集 1000，Stage2 训练集 10，验证集和测试集固定为 500。
+  Stage1 训练集 1000、验证集 500、测试集 800；Stage2 训练集 40、验证集 500、测试集 800。
 - `run_continuous_learning_hl.py` 负责：
 - 调用 `hl.continuous_learning.run_continuous_learning(...)` 完成两个阶段的 HL 持续学习。
 - 在 held-out test 上评估 HL。
 - 汇总到 `experiment/continuous_learning/continuous_hl_results.csv`。
 - `run_continuous_learning_baselines.py` 负责：
-- 训练并评估 baseline：
-  `LogisticRegression`、`MLP`、`DecisionTree`、`XGBoost`、`LightGBM`、`FT-Transformer`。
-- 汇总到 `experiment/continuous_learning/continuous_baseline_results.csv`。
+- 训练并评估本节所列十个 baseline；统一重跑结果写入
+  `experiment/continuous_learning/continuous_baselines_rerun_results.csv`，旧结果文件保持不动。
 - `run_continuous_learning_experiment.py` 负责：
 - 依次运行 HL 与 Baseline 两条链路。
 - 汇总到 `experiment/continuous_learning/continuous_results.csv`。

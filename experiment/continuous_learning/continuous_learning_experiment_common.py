@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -272,6 +273,8 @@ def _build_stage_bundle_from_partition(
         "partition_strategy": "two_stage_disjoint_balanced",
         "val_source_row_ids": _sorted_row_ids(raw_val_df),
         "test_source_row_ids": _sorted_row_ids(raw_test_df),
+        "val_source_row_ids_ordered": _ordered_row_ids(raw_val_df),
+        "test_source_row_ids_ordered": _ordered_row_ids(raw_test_df),
         "split_spec_obj": split_spec,
     }
     train_meta = {
@@ -285,6 +288,7 @@ def _build_stage_bundle_from_partition(
         "pos_replace": False,
         "neg_replace": False,
         "train_source_row_ids": _sorted_row_ids(raw_train_df),
+        "train_source_row_ids_ordered": _ordered_row_ids(raw_train_df),
     }
     return StageDataBundle(
         dataset=ds.name,
@@ -320,7 +324,8 @@ def stage_bundle_manifest(bundle: StageDataBundle) -> dict:
 
 def write_results_csv(path: Path, results: list[ModelStageResult]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
             fieldnames=[
@@ -354,6 +359,9 @@ def write_results_csv(path: Path, results: list[ModelStageResult]) -> None:
                     "out_dir": result.out_dir,
                 }
             )
+    os.replace(temp_path, path)
+
+
 def _load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
@@ -485,3 +493,9 @@ def _sorted_row_ids(df: pd.DataFrame) -> list[int]:
     if ROW_ID_COL not in df.columns:
         return []
     return sorted(int(x) for x in df[ROW_ID_COL].astype(int).tolist())
+
+
+def _ordered_row_ids(df: pd.DataFrame) -> list[int]:
+    if ROW_ID_COL not in df.columns:
+        return []
+    return [int(x) for x in df[ROW_ID_COL].astype(int).tolist()]
