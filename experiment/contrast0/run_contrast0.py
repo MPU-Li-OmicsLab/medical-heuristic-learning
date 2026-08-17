@@ -207,7 +207,7 @@ def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) ->
         extra_body=ms.extra_body,
     )
 
-    run_heuristic_learning(train_df=train_df, test_df=val_df, label_col=ds.label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
+    run_heuristic_learning(train_df=train_df, val_df=val_df, label_col=ds.label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
 
     model_path = out_dir / "final_heuristic_model.py"
     predict_fn = _load_predict_fn(model_path)

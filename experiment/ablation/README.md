@@ -49,7 +49,7 @@
 - `val` 与 `test` 都采用 1:1 正负样本抽样
 - `val_total=1000`，即 `500` 正样本 + `500` 负样本
 - `test_total=1000`，即 `500` 正样本 + `500` 负样本
-- 训练时把 `val_df` 传给 `run_heuristic_learning(..., test_df=val_df, ...)`
+- 训练时把 `val_df` 传给 `run_heuristic_learning(..., val_df=val_df, ...)`
 - 主流程结束后，会加载导出的 `final_heuristic_model.py`，再对 held-out `test_df` 额外评估一次
 
 两者差异：

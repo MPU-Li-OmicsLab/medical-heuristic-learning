@@ -45,8 +45,8 @@ Based on comprehensive evaluations across multiple medical datasets—including 
 
 The orchestrator validates that:
 
-- `label_col` exists in both `train_df` and `test_df`;
-- the train/test feature sets are identical after removing the label column.
+- `label_col` exists in both `train_df` and `val_df`;
+- the train/validation feature sets are identical after removing the label column.
 
 ### Continuous Learning Under Drift
 
@@ -158,7 +158,7 @@ uv run python example_continuous_learning.py
 ### What The Root Examples Do
 
 - `example_training.py`
-  loads `./data/YHD_bicarbonate.csv`, uses `hospital_expire_flag` as the label, takes rows `0:500` as train and `500:1000` as test, and writes to `./example_out`.
+  loads `./data/YHD_bicarbonate.csv`, uses `hospital_expire_flag` as the label, takes rows `0:500` as train and `500:1000` as validation, and writes to `./example_out`.
 - `example_inference.py`
   loads `./example_out/final_heuristic_model.py` and runs inference on the last 5 rows of `./data/YHD_bicarbonate.csv`.
 - `example_continuous_learning.py`
@@ -179,7 +179,7 @@ llm_cfg = LLMConfig(
 
 run_heuristic_learning(
     train_df=train_df,
-    test_df=test_df,
+    val_df=val_df,
     label_col="hospital_expire_flag",
     run_cfg=run_cfg,
     llm_cfg=llm_cfg,
@@ -207,7 +207,7 @@ continuous_cfg = ContinuousLearningConfig(
 
 result = run_continuous_learning(
     train_df=train_df,
-    test_df=test_df,
+    val_df=val_df,
     label_col="hospital_expire_flag",
     llm_cfg=llm_cfg,
     continuous_cfg=continuous_cfg,
@@ -322,7 +322,7 @@ Configuration for standard heuristic learning.
 ```python
 def run_heuristic_learning(
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     run_cfg: RunConfig,
     llm_cfg: LLMConfig,
@@ -388,7 +388,7 @@ Return object from `run_continuous_learning(...)`.
 def run_continuous_learning(
     *,
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     llm_cfg: LLMConfig,
     continuous_cfg: ContinuousLearningConfig,

@@ -45,8 +45,8 @@ Medical Heuristic Learning（MHL）是一个面向临床表格预测的轻量级
 
 主流程会先校验：
 
-- `label_col` 是否同时存在于 `train_df` 和 `test_df`；
-- 去除标签列后，训练集与测试集的特征集合是否一致。
+- `label_col` 是否同时存在于 `train_df` 和 `val_df`；
+- 去除标签列后，训练集与验证集的特征集合是否一致。
 
 ### 特征漂移下的持续学习
 
@@ -158,7 +158,7 @@ uv run python example_continuous_learning.py
 ### 根目录示例脚本实际行为
 
 - `example_training.py`
-  读取 `./data/YHD_bicarbonate.csv`，标签列为 `hospital_expire_flag`，使用 `0:500` 行作为训练集、`500:1000` 行作为测试集，输出到 `./example_out`。
+  读取 `./data/YHD_bicarbonate.csv`，标签列为 `hospital_expire_flag`，使用 `0:500` 行作为训练集、`500:1000` 行作为验证集，输出到 `./example_out`。
 - `example_inference.py`
   从 `./example_out/final_heuristic_model.py` 加载模型，并对 `./data/YHD_bicarbonate.csv` 的最后 5 行做推理。
 - `example_continuous_learning.py`
@@ -179,7 +179,7 @@ llm_cfg = LLMConfig(
 
 run_heuristic_learning(
     train_df=train_df,
-    test_df=test_df,
+    val_df=val_df,
     label_col="hospital_expire_flag",
     run_cfg=run_cfg,
     llm_cfg=llm_cfg,
@@ -207,7 +207,7 @@ continuous_cfg = ContinuousLearningConfig(
 
 result = run_continuous_learning(
     train_df=train_df,
-    test_df=test_df,
+    val_df=val_df,
     label_col="hospital_expire_flag",
     llm_cfg=llm_cfg,
     continuous_cfg=continuous_cfg,
@@ -322,7 +322,7 @@ Key 解析逻辑：
 ```python
 def run_heuristic_learning(
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     run_cfg: RunConfig,
     llm_cfg: LLMConfig,
@@ -388,7 +388,7 @@ def run_heuristic_learning(
 def run_continuous_learning(
     *,
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     llm_cfg: LLMConfig,
     continuous_cfg: ContinuousLearningConfig,

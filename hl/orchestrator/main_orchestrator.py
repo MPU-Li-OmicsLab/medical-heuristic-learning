@@ -40,7 +40,7 @@ def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str)
 
 
 def run_heuristic_learning(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
+    train_df: pd.DataFrame, val_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
 ) -> None:
     log_progress("HL", "Starting heuristic learning run.")
     if run_cfg.output_dir is None:
@@ -53,15 +53,15 @@ def run_heuristic_learning(
     ensure_dir(out_dir)
     log_progress("HL", f"Using output directory: {out_dir}")
     train_df = train_df.reset_index(drop=True)
-    test_df = test_df.reset_index(drop=True)
+    val_df = val_df.reset_index(drop=True)
 
-    if label_col not in train_df.columns or label_col not in test_df.columns:
-        raise ValueError(f"label_col={label_col} must exist in both train_df and test_df.")
+    if label_col not in train_df.columns or label_col not in val_df.columns:
+        raise ValueError(f"label_col={label_col} must exist in both train_df and val_df.")
 
     train_cols = [c for c in train_df.columns if c != label_col]
-    test_cols = [c for c in test_df.columns if c != label_col]
-    if set(train_cols) != set(test_cols):
-        raise ValueError("train_df and test_df must have the same set of feature columns.")
+    val_cols = [c for c in val_df.columns if c != label_col]
+    if set(train_cols) != set(val_cols):
+        raise ValueError("train_df and val_df must have the same set of feature columns.")
     feature_cols = train_cols
 
     heuristic_path = out_dir / "heuristic_system.py"
@@ -119,7 +119,7 @@ def run_heuristic_learning(
     records, iteration_log = run_iterations_task(
         client=client,
         train_df=train_df,
-        test_df=test_df,
+        val_df=val_df,
         label_col=label_col,
         run_cfg=run_cfg,
         heuristic_path=heuristic_path,

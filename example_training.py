@@ -13,7 +13,7 @@ def main() -> None:
     label_col = "hospital_expire_flag"
 
     train_df = data.iloc[:500].copy()
-    test_df = data.iloc[500:1000].copy()
+    val_df = data.iloc[500:1000].copy()
 
     # Complete steps
     run_cfg = RunConfig(
@@ -38,7 +38,7 @@ def main() -> None:
         model_name="deepseek-v4-pro",
         temperature=0.3,
     )
-    run_heuristic_learning(train_df=train_df, test_df=test_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
+    run_heuristic_learning(train_df=train_df, val_df=val_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
 
 
 if __name__ == "__main__":

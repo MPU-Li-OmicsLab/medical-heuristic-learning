@@ -119,7 +119,7 @@ def _run_hl_stage(
         )
         run_heuristic_learning(
             train_df=bundle.train_df,
-            test_df=bundle.val_df,
+            val_df=bundle.val_df,
             label_col=ds.label_col,
             run_cfg=run_cfg,
             llm_cfg=llm_cfg,
@@ -140,7 +140,7 @@ def _run_hl_stage(
         )
         result = run_continuous_learning(
             train_df=bundle.train_df,
-            test_df=bundle.val_df,
+            val_df=bundle.val_df,
             label_col=ds.label_col,
             llm_cfg=llm_cfg,
             continuous_cfg=continuous_cfg,

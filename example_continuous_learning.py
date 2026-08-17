@@ -26,11 +26,11 @@ def main() -> None:
         raise ValueError(f"Expected drift feature `{dropped_feature}` not found in {data_path}")
 
     train_df = data.iloc[:500].copy()
-    test_df = data.iloc[500:1000].copy()
+    val_df = data.iloc[500:1000].copy()
 
     # Simulate the new environment where the `wbc` feature is no longer available.
     train_df = train_df.drop(columns=[dropped_feature])
-    test_df = test_df.drop(columns=[dropped_feature])
+    val_df = val_df.drop(columns=[dropped_feature])
 
     llm_cfg = LLMConfig(
         base_url="https://api.deepseek.com/v1",
@@ -65,7 +65,7 @@ def main() -> None:
 
     result = run_continuous_learning(
         train_df=train_df,
-        test_df=test_df,
+        val_df=val_df,
         label_col=label_col,
         llm_cfg=llm_cfg,
         continuous_cfg=continuous_cfg,

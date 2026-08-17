@@ -58,7 +58,7 @@
 
 训练方式为：
 
-- 将 `val_df` 传入 `run_heuristic_learning(..., test_df=val_df, ...)`
+- 将 `val_df` 传入 `run_heuristic_learning(..., val_df=val_df, ...)`
 - 用验证集结果选择最终导出的 `final_heuristic_model.py`
 - 训练结束后，再用该最终模型在 held-out `test_df` 上重新评估
 - 把 held-out test 指标写入汇总 CSV 和实验目录下的摘要文件

@@ -65,7 +65,7 @@ def run_iterations_task(
     *,
     client: LLMClient | None,
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     run_cfg: RunConfig,
     heuristic_path: Path,
@@ -80,7 +80,7 @@ def run_iterations_task(
         raise RuntimeError("predict_v0 not found in heuristic_system.py")
 
     y_true_train = train_df[label_col].astype(int).to_numpy()
-    y_true_test = test_df[label_col].astype(int).to_numpy()
+    y_true_val = val_df[label_col].astype(int).to_numpy()
 
     current_version = "v0"
     current_fn = fn_v0
@@ -92,8 +92,8 @@ def run_iterations_task(
     last_regressed_indices: list[int] = []
     last_regressed_examples: list[dict] = []
 
-    y_pred_test_v0 = _predict_with_function(fn_v0, test_df, label_col)
-    metrics_v0 = compute_metrics(y_true_test, y_pred_test_v0)
+    y_pred_val_v0 = _predict_with_function(fn_v0, val_df, label_col)
+    metrics_v0 = compute_metrics(y_true_val, y_pred_val_v0)
     v0_analysis = str(ns.get("ERROR_ANALYSIS_predict_v0") or "v0")
     records.append(IterationRecord(version="v0", error_analysis=v0_analysis, metrics=metrics_v0))
     append_text(evolution_results_path, f"v0\t{metrics_v0}\n")
@@ -198,8 +198,8 @@ def run_iterations_task(
             trajectory_lines.append(f"{next_version}: {proposal.error_analysis}")
             accepted = True
 
-            y_pred_test = _predict_with_function(current_fn, test_df, label_col)
-            metrics = compute_metrics(y_true_test, y_pred_test)
+            y_pred_val = _predict_with_function(current_fn, val_df, label_col)
+            metrics = compute_metrics(y_true_val, y_pred_val)
             records.append(IterationRecord(version=current_version, error_analysis=proposal.error_analysis, metrics=metrics))
             append_text(evolution_results_path, f"{current_version}\t{metrics}\n")
             log_progress("HL-CL-ITER", f"Accepted {current_version} with metrics: {metrics}.")

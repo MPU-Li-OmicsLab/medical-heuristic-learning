@@ -73,7 +73,7 @@ def _build_run_config(cfg: ContinuousLearningConfig, out_dir: Path) -> RunConfig
 def run_continuous_learning(
     *,
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     label_col: str,
     llm_cfg: LLMConfig,
     continuous_cfg: ContinuousLearningConfig,
@@ -85,14 +85,14 @@ def run_continuous_learning(
     run_cfg = _build_run_config(continuous_cfg, out_dir)
 
     train_df = train_df.reset_index(drop=True)
-    test_df = test_df.reset_index(drop=True)
-    if label_col not in train_df.columns or label_col not in test_df.columns:
-        raise ValueError(f"label_col={label_col} must exist in both train_df and test_df.")
+    val_df = val_df.reset_index(drop=True)
+    if label_col not in train_df.columns or label_col not in val_df.columns:
+        raise ValueError(f"label_col={label_col} must exist in both train_df and val_df.")
 
     train_cols = [col for col in train_df.columns if col != label_col]
-    test_cols = [col for col in test_df.columns if col != label_col]
-    if set(train_cols) != set(test_cols):
-        raise ValueError("train_df and test_df must have the same set of feature columns.")
+    val_cols = [col for col in val_df.columns if col != label_col]
+    if set(train_cols) != set(val_cols):
+        raise ValueError("train_df and val_df must have the same set of feature columns.")
 
     heuristic_path = out_dir / "heuristic_system.py"
     evolution_results_path = out_dir / "evolution_results.txt"
@@ -173,7 +173,7 @@ def run_continuous_learning(
     records, iteration_log = run_iterations_task(
         client=client,
         train_df=train_df,
-        test_df=test_df,
+        val_df=val_df,
         label_col=label_col,
         run_cfg=run_cfg,
         heuristic_path=heuristic_path,

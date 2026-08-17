@@ -58,7 +58,7 @@ from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_co
 ```python
 result = run_continuous_learning(
     train_df=train_df,
-    test_df=val_df,
+    val_df=val_df,
     label_col=label_col,
     llm_cfg=llm_cfg,
     continuous_cfg=ContinuousLearningConfig(
@@ -85,7 +85,7 @@ result = run_continuous_learning(
 - 如果显式传入 `output_dir`，则完全使用传入路径。
 
 ## 持续学习主干的执行顺序
-- 校验 `train_df`、`test_df` 与 `label_col`。
+- 校验 `train_df`、`val_df` 与 `label_col`。
 - 根据 `ContinuousLearningConfig` 中的漂移与运行配置记录当前上下文。
 - 更新 Probe 1：
   读取旧 `probe_univariate_results.csv`，删除失效特征，同步 rename，并对新增或恢复特征补充新分析。
@@ -204,7 +204,7 @@ continuous_cfg = ContinuousLearningConfig(
 
 result = run_continuous_learning(
     train_df=train_df,
-    test_df=val_df,
+    val_df=val_df,
     label_col=label_col,
     llm_cfg=llm_cfg,
     continuous_cfg=continuous_cfg,
