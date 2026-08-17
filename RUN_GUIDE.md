@@ -20,6 +20,28 @@
 uv sync
 ```
 
+运行完整对比实验还需要 dev 依赖：
+
+```bash
+uv sync --group dev
+```
+
+CORELS 1.1.29 是官方源码包，需要 C++ 编译器。若全新 Python 3.11 / NumPy 2
+环境因包内旧生成代码构建失败，应使用 dev 组中的 Cython 3 从官方
+`corels/_corels.pyx` 重新生成 `_corels.cpp` 后构建 wheel；不要改用非官方 fork。
+本仓库当前 `.venv` 已完成该步骤并通过 toy-data 拟合测试。
+
+当前扩展实验统一使用种子 `36 40 42`，并支持逐任务断点续跑：
+
+```bash
+uv run python experiment/contrast1/run_contrast1_balance.py --models all --seeds 36 40 42 --resume
+uv run python experiment/contrast2/run_contrast2.py --models all --seeds 36 40 42 --resume
+uv run python experiment/continuous_learning/run_continuous_learning_baselines.py --models all --seeds 36 40 42 --resume
+```
+
+十个普通模型都会重跑，只有已有 HL 结果直接复用。详细的数据规模、关闭自动平衡
+配置、持续学习先验级联和输出约定见 `experiment/EXPERIMENT_EXTENSION_PLAN.md`。
+
 运行示例入口（推荐）：
 
 ```bash
