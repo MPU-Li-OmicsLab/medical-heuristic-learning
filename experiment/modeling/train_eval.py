@@ -211,7 +211,7 @@ def fit_model(
             # DeepTab 2.0 currently constructs Lightning's ModelCheckpoint with
             # dirpath=None, so Lightning resolves it from default_root_dir.
             default_root_dir=str(deep_checkpoint_dir.parent),
-            accelerator="cpu",
+            accelerator="auto",
             devices=1,
             precision="32-true",
             enable_progress_bar=False,
