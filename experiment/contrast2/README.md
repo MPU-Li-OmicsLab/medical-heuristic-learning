@@ -6,12 +6,14 @@
 LightGBM、DeepTab FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS；
 HL 继续复用旧结果。类别比例只在训练数据采样阶段设置，模型层自动平衡全部关闭。
 
-正式种子为 `36 40 42`，训练总量为 `1000/3000`，九种正负比保持不变。YHD 的
-无重复验证集和测试集各缩为 500 条，UKB 各为 1000 条。运行命令：
+正式种子为 `36 40 42`，训练总量为 `1000/3000`，九种正负比保持不变。更新后的
+YHD 与 UKB 对齐：无重复验证集和测试集均各为 1000 条，并按 `1:1` 生成。
+只重跑 YHD baseline、保留已有 UKB 结果的命令：
 
 ```bash
 uv run python experiment/contrast2/run_contrast2.py \
-  --models all --seeds 36 40 42 --resume
+  --models all --seeds 36 40 42 --datasets YHD \
+  --resume --rerun-existing
 ```
 
 逐 seed 结果写入 `contrast2_rerun_seed<seed>.csv`，模型产物位于
@@ -46,6 +48,8 @@ uv run python experiment/contrast2/run_contrast2.py \
 - `val`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
 - `test`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
 - `train_pool`：去掉 `val/test` 后剩余的样本
+
+UKB 与 YHD 使用同一个分层随机切分实现和同一组 seed；验证集、测试集都无放回且源行不重叠。
 
 ### 训练集设置
 
@@ -107,8 +111,13 @@ uv run python experiment/contrast2/run_contrast2.py --seed 42 --workers 8
 
 参数：
 
-- `--seed`：控制 `val/test` 划分与训练集采样
+- `--seed` / `--seeds`：控制 `val/test` 划分、训练集采样和模型随机种子
+- `--datasets`：选择要运行的数据集；本轮只更新 YHD 时传 `--datasets YHD`
 - `--workers`：CPU 任务的并行进程数
+- `--resume`：读取现有逐 seed CSV，从而保留未选择的 UKB 行
+- `--retry-errors`：只重试已有失败行
+- `--rerun-existing`：重新运行已存在的所选任务；更新 YHD 数据后必须与 `--resume` 一起使用，
+  否则旧的 YHD `status=ok` 行会被跳过
 
 说明：
 

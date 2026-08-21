@@ -57,7 +57,7 @@ class RatioSpec:
 
 DATASETS = (
     DatasetSpec("UKB", REPO_ROOT / "data" / "UKB.csv", "label", 1000),
-    DatasetSpec("YHD", REPO_ROOT / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag", 500),
+    DatasetSpec("YHD", REPO_ROOT / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag", 1000),
 )
 TRAIN_TOTALS = (1000, 3000)
 RATIOS = (
@@ -208,6 +208,7 @@ def run_contrast2(
     datasets: tuple[str, ...] = ("UKB", "YHD"),
     resume: bool = False,
     retry_errors: bool = False,
+    rerun_existing: bool = False,
 ) -> Path:
     """Run one seed of contrast2 and atomically update its result CSV."""
 
@@ -242,7 +243,11 @@ def run_contrast2(
                     completed += 1
                     key = (model_name, spec.name, int(total), ratio.name)
                     previous = rows_by_key.get(key)
-                    if previous is not None and (not retry_errors or previous.get("status") in {"ok", "continued"}):
+                    if (
+                        previous is not None
+                        and not rerun_existing
+                        and (not retry_errors or previous.get("status") in {"ok", "continued"})
+                    ):
                         print(f"[{completed}/{total_tasks}] skip {key} status={previous.get('status')}", flush=True)
                         continue
 
@@ -326,6 +331,11 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1, help="Accepted for compatibility; model runs remain sequential")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument(
+        "--rerun-existing",
+        action="store_true",
+        help="Rerun selected tasks even when resume loaded an existing successful row.",
+    )
     args = parser.parse_args()
     seeds = (args.seed,) if args.seed is not None else tuple(args.seeds)
     models = parse_model_names(args.models)
@@ -338,6 +348,7 @@ def main() -> None:
         path = run_contrast2(
             int(seed), models=models, train_totals=tuple(args.train_totals), ratios=selected_ratios,
             datasets=tuple(args.datasets), resume=bool(args.resume), retry_errors=bool(args.retry_errors),
+            rerun_existing=bool(args.rerun_existing),
         )
         print(f"contrast2_rerun_csv={path}", flush=True)
 
