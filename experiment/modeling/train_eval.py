@@ -326,7 +326,16 @@ def save_fitted_model(fitted_model: FittedModel, output_dir: Path) -> Path:
         joblib.dump(fitted_model, model_path)
     estimator = fitted_model.estimator
     get_params = getattr(estimator, "get_params", None)
-    resolved_params = get_params(deep=True) if callable(get_params) else {}
+    if callable(get_params):
+        try:
+            resolved_params = get_params(deep=True)
+        except TypeError:
+            # Official CORELS exposes get_params() without sklearn's `deep`
+            # keyword. Its fitted model is already saved above; this fallback
+            # keeps metadata generation compatible with that public API.
+            resolved_params = get_params()
+    else:
+        resolved_params = {}
     (output_dir / "resolved_model_config.json").write_text(
         json.dumps(
             {
