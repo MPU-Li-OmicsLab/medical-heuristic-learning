@@ -19,10 +19,16 @@ script_dir = Path(__file__).resolve().parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
+from experiment.modeling.config import EXPERIMENT_SEEDS
 from hl.config import LLMConfig, RunConfig
 from hl.metrics import compute_metrics
 from hl.orchestrator import run_heuristic_learning
 from hl.utils.io import write_json, write_text
+
+
+FIELDNAMES = [
+    "大模型", "数据集", "ACC", "F1", "Sensitivity", "Specificity", "status", "error",
+]
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,14 @@ class ModelSpec:
     model_name: str
     temperature: float
     extra_body: dict | None = None
+    thinking_mode: bool | None = None
+    thinking_strength: str | None = None
+
+
+ALL_DATASETS = (
+    DatasetSpec("UKB", repo_root / "data" / "UKB.csv", "label"),
+    DatasetSpec("YHD", repo_root / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
+)
 
 
 def _timestamp() -> str:
@@ -150,7 +164,7 @@ def _load_predict_fn(model_path: Path):
     spec.loader.exec_module(module)
     predict_fn = getattr(module, "predict", None)
     if predict_fn is None:
-        raise RuntimeError(f"`predict(features)` not found in {model_path}")
+        raise RuntimeError(f"predict(features) not found in {model_path}")
     return predict_fn
 
 
@@ -174,6 +188,94 @@ def _read_final_version(model_path: Path) -> str:
     return ""
 
 
+def _build_model_specs() -> tuple[ModelSpec, ...]:
+    deepseek_base = os.getenv("CONTRAST0_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    deepseek_key_env = os.getenv("CONTRAST0_DEEPSEEK_KEY_ENV", "DEEPSEEK_API_KEY")
+
+    router_base = os.getenv("CONTRAST0_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    router_key_env = os.getenv("CONTRAST0_ROUTER_KEY_ENV", "OPENROUTER_API_KEY")
+
+    vveai_base = os.getenv("CONTRAST0_VVEAI_BASE_URL", "https://api.vveai.com").rstrip("/")
+    if not vveai_base.endswith("/v1"):
+        vveai_base = vveai_base + "/v1"
+    vveai_gemini_key_env = os.getenv("CONTRAST0_VVEAI_GEMINI_KEY_ENV", "VVEAI_GEMINI_API_KEY")
+    vveai_gpt55_key_env = os.getenv("CONTRAST0_VVEAI_GPT55_KEY_ENV", "VVEAI_GPT55_API_KEY")
+
+    return (
+        ModelSpec(
+            display_name="deepseek-v4-pro-high",
+            base_url=deepseek_base,
+            api_key_env=deepseek_key_env,
+            model_name="deepseek-v4-pro",
+            temperature=0.0,
+            thinking_mode=True,
+            thinking_strength="high",
+        ),
+        ModelSpec(
+            display_name="deepseek-v4-pro-max",
+            base_url=deepseek_base,
+            api_key_env=deepseek_key_env,
+            model_name="deepseek-v4-pro",
+            temperature=0.0,
+            thinking_mode=True,
+            thinking_strength="max",
+        ),
+        ModelSpec(
+            display_name="deepseek-v4-flash-high",
+            base_url=deepseek_base,
+            api_key_env=deepseek_key_env,
+            model_name="deepseek-v4-flash",
+            temperature=0.0,
+            thinking_mode=True,
+            thinking_strength="high",
+        ),
+        ModelSpec(
+            display_name="deepseek-v4-flash-max",
+            base_url=deepseek_base,
+            api_key_env=deepseek_key_env,
+            model_name="deepseek-v4-flash",
+            temperature=0.0,
+            thinking_mode=True,
+            thinking_strength="max",
+        ),
+        ModelSpec(
+            display_name="qwen/qwen3.7-max",
+            base_url=router_base,
+            api_key_env=router_key_env,
+            model_name="qwen/qwen3.7-max",
+            temperature=0.0,
+        ),
+        ModelSpec(
+            display_name="gemini-3.1-pro-preview",
+            base_url=vveai_base,
+            api_key_env=vveai_gemini_key_env,
+            model_name="gemini-3.1-pro-preview",
+            temperature=0.0,
+        ),
+        ModelSpec(
+            display_name="gpt-5.5",
+            base_url=vveai_base,
+            api_key_env=vveai_gpt55_key_env,
+            model_name="gpt-5.5",
+            temperature=0.0,
+        ),
+    )
+
+
+def parse_model_names(value: str, specs: tuple[ModelSpec, ...]) -> tuple[ModelSpec, ...]:
+    """Parse the --models CLI value while keeping the configured model order."""
+    by_name = {ms.display_name: ms for ms in specs}
+    if value.strip().lower() == "all":
+        requested = list(by_name)
+    else:
+        requested = [name.strip() for name in value.split(",") if name.strip()]
+    unknown = sorted(set(requested) - set(by_name))
+    if unknown:
+        raise ValueError(f"Unknown model names: {unknown}; expected one of {list(by_name)}")
+    selected = set(requested)
+    return tuple(ms for ms in specs if ms.display_name in selected)
+
+
 def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) -> dict:
     split_spec = SplitSpec(val_total=1000, test_total=1000)
     train_total = 1000
@@ -185,7 +287,9 @@ def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) ->
     df[ds.label_col] = df[ds.label_col].astype(int)
 
     train_pool, val_df, test_df = _split_val_test_balanced(df, ds.label_col, split_spec, seed=seed)
-    train_df, train_meta = _sample_train_balanced(train_pool, label_col=ds.label_col, train_total=train_total, seed=seed + 1000, spec=split_spec)
+    train_df, train_meta = _sample_train_balanced(
+        train_pool, label_col=ds.label_col, train_total=train_total, seed=seed + 1000, spec=split_spec
+    )
 
     out_dir = output_root / ds.name / ms.display_name.replace("/", "_") / _timestamp()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +309,8 @@ def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) ->
         model_name=ms.model_name,
         temperature=ms.temperature,
         extra_body=ms.extra_body,
+        thinking_mode=ms.thinking_mode,
+        thinking_strength=ms.thinking_strength,
     )
 
     run_heuristic_learning(train_df=train_df, val_df=val_df, label_col=ds.label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
@@ -226,6 +332,8 @@ def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) ->
         "model_name": ms.model_name,
         "base_url": ms.base_url,
         "api_key_env": ms.api_key_env,
+        "thinking_mode": ms.thinking_mode,
+        "thinking_strength": ms.thinking_strength,
         "train_sampling": train_meta,
         "final_version": final_version,
         "heldout_test_metrics": metrics,
@@ -252,17 +360,20 @@ def _run_one(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) ->
         "F1": f"{float(metrics.get('F1')):.3f}" if metrics.get("F1") is not None else "",
         "Sensitivity": f"{float(metrics.get('Sensitivity')):.3f}" if metrics.get("Sensitivity") is not None else "",
         "Specificity": f"{float(metrics.get('Specificity')):.3f}" if metrics.get("Specificity") is not None else "",
+        "status": "ok",
+        "error": "",
     }
 
 
 def _run_one_safe(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Path) -> dict:
     try:
-        print(f"[contrast0] start dataset={ds.name} model={ms.display_name}", flush=True)
-        r = _run_one(ds=ds, ms=ms, seed=seed, output_root=output_root)
-        print(f"[contrast0] done dataset={ds.name} model={ms.display_name}", flush=True)
-        return r
-    except Exception as e:
-        print(f"[contrast0] failed dataset={ds.name} model={ms.display_name} error={e}", flush=True)
+        print(f"[contrast0] start dataset={ds.name} model={ms.display_name} seed={seed}", flush=True)
+        row = _run_one(ds=ds, ms=ms, seed=seed, output_root=output_root)
+        print(f"[contrast0] done dataset={ds.name} model={ms.display_name} seed={seed}", flush=True)
+        return row
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        print(f"[contrast0] failed dataset={ds.name} model={ms.display_name} seed={seed} error={error}", flush=True)
         return {
             "大模型": ms.display_name,
             "数据集": ds.name,
@@ -270,157 +381,137 @@ def _run_one_safe(*, ds: DatasetSpec, ms: ModelSpec, seed: int, output_root: Pat
             "F1": "",
             "Sensitivity": "",
             "Specificity": "",
+            "status": "error",
+            "error": error,
         }
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--workers", type=int, default=1)
-    p.add_argument("--output-root", type=str, default=str(script_dir / "outputs"))
-    p.add_argument(
-        "--datasets",
-        nargs="+",
-        choices=("UKB", "YHD"),
-        default=("UKB", "YHD"),
-        help="Datasets to run. Selecting only YHD preserves existing UKB summary rows.",
-    )
-    args = p.parse_args()
+def _task_key(row: dict) -> tuple[str, str]:
+    return str(row.get("大模型", "")), str(row.get("数据集", ""))
 
-    seed = int(args.seed)
-    workers = int(args.workers)
+
+def _read_existing(path: Path) -> dict[tuple[str, str], dict]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return {
+            _task_key(row): row
+            for row in csv.DictReader(handle)
+            if row.get("大模型") and row.get("数据集")
+        }
+
+
+def _write_csv_atomic(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        writer.writerows([{key: row.get(key, "") for key in FIELDNAMES} for row in rows])
+    os.replace(temp_path, path)
+
+
+def _ordered_rows(rows_by_key: dict[tuple[str, str], dict], specs: tuple[ModelSpec, ...]) -> list[dict]:
+    model_order = {ms.display_name: idx for idx, ms in enumerate(specs)}
+    dataset_order = {spec.name: idx for idx, spec in enumerate(ALL_DATASETS)}
+    return sorted(
+        rows_by_key.values(),
+        key=lambda row: (
+            model_order.get(str(row.get("大模型", "")), 999),
+            dataset_order.get(str(row.get("数据集", "")), 999),
+        ),
+    )
+
+
+def run_contrast0(
+    *,
+    seed: int,
+    model_specs: tuple[ModelSpec, ...],
+    datasets: tuple[str, ...],
+    resume: bool,
+    retry_errors: bool,
+    rerun_existing: bool,
+    workers: int,
+    output_root: Path,
+) -> Path:
+    """Run one seed of contrast0 and atomically update its per-seed result CSV."""
+    out_path = script_dir / f"contrast0_rerun_seed{seed}.csv"
+    rows_by_key = _read_existing(out_path) if resume else {}
+    selected_datasets = tuple(spec for spec in ALL_DATASETS if spec.name in datasets)
+    tasks = [(ds, ms) for ms in model_specs for ds in selected_datasets]
+
+    pending: list[tuple[DatasetSpec, ModelSpec]] = []
+    total = len(tasks)
+    checked = 0
+    for ds, ms in tasks:
+        checked += 1
+        key = (ms.display_name, ds.name)
+        previous = rows_by_key.get(key)
+        if (
+            previous is not None
+            and not rerun_existing
+            and (not retry_errors or previous.get("status") in {"ok", "continued"})
+        ):
+            print(f"[{checked}/{total}] skip seed={seed} dataset={ds.name} model={ms.display_name} status={previous.get('status')}", flush=True)
+            continue
+        pending.append((ds, ms))
+
+    if workers <= 1:
+        for ds, ms in pending:
+            rows_by_key[(ms.display_name, ds.name)] = _run_one_safe(
+                ds=ds, ms=ms, seed=int(seed), output_root=output_root
+            )
+            _write_csv_atomic(out_path, _ordered_rows(rows_by_key, model_specs))
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            future_to_task = {
+                executor.submit(_run_one_safe, ds=ds, ms=ms, seed=int(seed), output_root=output_root): (ds, ms)
+                for ds, ms in pending
+            }
+            for future in as_completed(future_to_task):
+                ds, ms = future_to_task[future]
+                rows_by_key[(ms.display_name, ds.name)] = future.result()
+                _write_csv_atomic(out_path, _ordered_rows(rows_by_key, model_specs))
+
+    _write_csv_atomic(out_path, _ordered_rows(rows_by_key, model_specs))
+    return out_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run LLM-backend contrast experiment (contrast0).")
+    parser.add_argument("--models", default="all", help="all or comma-separated model display names")
+    parser.add_argument("--seeds", nargs="+", type=int, default=list(EXPERIMENT_SEEDS))
+    parser.add_argument("--seed", type=int, help="Backward-compatible single-seed override")
+    parser.add_argument("--datasets", nargs="+", choices=[spec.name for spec in ALL_DATASETS], default=[spec.name for spec in ALL_DATASETS])
+    parser.add_argument("--workers", type=int, default=1, help="Parallel workers for LLM runs (default 1)")
+    parser.add_argument("--output-root", type=str, default=str(script_dir / "outputs"))
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument(
+        "--rerun-existing",
+        action="store_true",
+        help="Rerun selected tasks even when resume loaded an existing successful row.",
+    )
+    args = parser.parse_args()
+
+    seeds = (args.seed,) if args.seed is not None else tuple(args.seeds)
+    model_specs = _build_model_specs()
+    selected_specs = parse_model_names(args.models, model_specs)
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    deepseek_base = "https://api.deepseek.com/v1"
-    deepseek_key_env = "DEEPSEEK_API_KEY"
-
-    router_base = "https://openrouter.ai/api/v1"
-    router_key_env = "OPENROUTER_API_KEY"
-
-    vveai_base = "https://api.vveai.com"
-    vveai_gemini_key_env = "VVEAI_GEMINI_API_KEY"
-    vveai_gpt55_key_env = "VVEAI_GPT55_API_KEY"
-
-    if os.getenv("CONTRAST0_DEEPSEEK_BASE_URL"):
-        deepseek_base = os.getenv("CONTRAST0_DEEPSEEK_BASE_URL", deepseek_base)
-    if os.getenv("CONTRAST0_DEEPSEEK_KEY_ENV"):
-        deepseek_key_env = os.getenv("CONTRAST0_DEEPSEEK_KEY_ENV", deepseek_key_env)
-
-    if os.getenv("CONTRAST0_ROUTER_BASE_URL"):
-        router_base = os.getenv("CONTRAST0_ROUTER_BASE_URL", router_base)
-    if os.getenv("CONTRAST0_ROUTER_KEY_ENV"):
-        router_key_env = os.getenv("CONTRAST0_ROUTER_KEY_ENV", router_key_env)
-
-    if os.getenv("CONTRAST0_VVEAI_BASE_URL"):
-        vveai_base = os.getenv("CONTRAST0_VVEAI_BASE_URL", vveai_base)
-    if os.getenv("CONTRAST0_VVEAI_GEMINI_KEY_ENV"):
-        vveai_gemini_key_env = os.getenv("CONTRAST0_VVEAI_GEMINI_KEY_ENV", vveai_gemini_key_env)
-    if os.getenv("CONTRAST0_VVEAI_GPT55_KEY_ENV"):
-        vveai_gpt55_key_env = os.getenv("CONTRAST0_VVEAI_GPT55_KEY_ENV", vveai_gpt55_key_env)
-
-    vveai_base = vveai_base.rstrip("/")
-    if not vveai_base.endswith("/v1"):
-        vveai_base = vveai_base + "/v1"
-
-    models = [
-        ModelSpec(
-            display_name="deepseek-v4-pro",
-            base_url=deepseek_base,
-            api_key_env=deepseek_key_env,
-            model_name="deepseek-v4-pro",
-            temperature=0.0,
-            extra_body={"thinking": {"type": "disabled"}},
-        ),
-        ModelSpec(
-            display_name="deepseek-v4-pro-thinking",
-            base_url=deepseek_base,
-            api_key_env=deepseek_key_env,
-            model_name="deepseek-v4-pro",
-            temperature=0.0,
-            extra_body={"thinking": {"type": "enabled"}},
-        ),
-        ModelSpec(
-            display_name="deepseek-v4-flash",
-            base_url=deepseek_base,
-            api_key_env=deepseek_key_env,
-            model_name="deepseek-v4-flash",
-            temperature=0.0,
-            extra_body={"thinking": {"type": "disabled"}},
-        ),
-        ModelSpec(
-            display_name="qwen/qwen3.7-max",
-            base_url=router_base,
-            api_key_env=router_key_env,
-            model_name="qwen/qwen3.7-max",
-            temperature=0.0,
-        ),
-        ModelSpec(
-            display_name="gemini-3.1-pro-preview",
-            base_url=vveai_base,
-            api_key_env=vveai_gemini_key_env,
-            model_name="gemini-3.1-pro-preview",
-            temperature=0.0,
-        ),
-        ModelSpec(
-            display_name="gpt-5.5",
-            base_url=vveai_base,
-            api_key_env=vveai_gpt55_key_env,
-            model_name="gpt-5.5",
-            temperature=0.0,
-        ),
-    ]
-
-    all_datasets = [
-        DatasetSpec("UKB", repo_root / "data" / "UKB.csv", "label"),
-        DatasetSpec("YHD", repo_root / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
-    ]
-    selected_dataset_names = set(args.datasets)
-    datasets = [ds for ds in all_datasets if ds.name in selected_dataset_names]
-
-    tasks = [(ds, ms) for ms in models for ds in datasets]
-    results: list[dict] = []
-    if workers <= 1:
-        for ds, ms in tasks:
-            results.append(_run_one_safe(ds=ds, ms=ms, seed=seed, output_root=output_root))
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = [ex.submit(_run_one_safe, ds=ds, ms=ms, seed=seed, output_root=output_root) for ds, ms in tasks]
-            for fut in as_completed(futs):
-                results.append(fut.result())
-
-    model_order = {m.display_name: i for i, m in enumerate(models)}
-    dataset_order = {"UKB": 0, "YHD": 1}
-
-    def sort_key(r: dict) -> tuple:
-        m = str(r.get("大模型", ""))
-        ds = str(r.get("数据集", ""))
-        return (model_order.get(m, 99), dataset_order.get(ds, 99))
-
-    out_csv = script_dir / "contrast0.csv"
-    rows_by_key: dict[tuple[str, str], dict] = {}
-    if out_csv.exists() and selected_dataset_names != {ds.name for ds in all_datasets}:
-        with out_csv.open("r", encoding="utf-8", newline="") as f:
-            for row in csv.DictReader(f):
-                if str(row.get("数据集", "")) not in selected_dataset_names:
-                    rows_by_key[(str(row.get("大模型", "")), str(row.get("数据集", "")))] = row
-    for row in results:
-        rows_by_key[(str(row.get("大模型", "")), str(row.get("数据集", "")))] = row
-    results = list(rows_by_key.values())
-    results.sort(key=sort_key)
-
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    temp_csv = out_csv.with_suffix(out_csv.suffix + ".tmp")
-    with temp_csv.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["大模型", "数据集", "ACC", "F1", "Sensitivity", "Specificity"],
+    for seed in seeds:
+        path = run_contrast0(
+            seed=int(seed),
+            model_specs=selected_specs,
+            datasets=tuple(args.datasets),
+            resume=bool(args.resume),
+            retry_errors=bool(args.retry_errors),
+            rerun_existing=bool(args.rerun_existing),
+            workers=int(args.workers),
+            output_root=output_root,
         )
-        writer.writeheader()
-        writer.writerows([{k: r.get(k, "") for k in writer.fieldnames} for r in results])
-    os.replace(temp_csv, out_csv)
-
-    print(f"contrast0_csv={out_csv}", flush=True)
+        print(f"contrast0_rerun_csv={path}", flush=True)
 
 
 if __name__ == "__main__":

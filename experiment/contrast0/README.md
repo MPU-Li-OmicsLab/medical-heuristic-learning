@@ -31,7 +31,8 @@
 
 ### 默认随机种子
 
-- `seed=42`
+- 默认种子为 `36 40 42`（与 contrast1 / contrast2 一致）
+- 可用 `--seed 42` 覆盖为单个种子
 
 ### 切分规则
 
@@ -67,25 +68,27 @@
 
 ## 对比的大模型
 
-脚本当前内置 6 个模型配置：
+脚本当前内置 7 个模型配置：
 
-- `deepseek-v4-pro`
-- `deepseek-v4-pro-thinking`
-- `deepseek-v4-flash`
+- `deepseek-v4-pro-high`
+- `deepseek-v4-pro-max`
+- `deepseek-v4-flash-high`
+- `deepseek-v4-flash-max`
 - `qwen/qwen3.7-max`
 - `gemini-3.1-pro-preview`
 - `gpt-5.5`
 
-这些模型会分别在两个数据集上运行，因此默认一共执行：
+这些模型会分别在两个数据集上运行，因此每个种子执行：
 
-- `6 个模型 × 2 个数据集 = 12` 个实验
+- `7 个模型 × 2 个数据集 = 14` 个实验
 
 ### 各模型来源
 
 - DeepSeek：
-  - `deepseek-v4-pro`
-  - `deepseek-v4-pro-thinking`
-  - `deepseek-v4-flash`
+  - `deepseek-v4-pro`，思考强度 `high`
+  - `deepseek-v4-pro`，思考强度 `max`
+  - `deepseek-v4-flash`，思考强度 `high`
+  - `deepseek-v4-flash`，思考强度 `max`
 - OpenRouter：
   - `qwen/qwen3.7-max`
 - vveai：
@@ -94,16 +97,20 @@
 
 ### DeepSeek 思考模式
 
-`deepseek-v4-pro-thinking` 实际仍调用模型名 `deepseek-v4-pro`，区别在于额外传入：
+四个 DeepSeek 条目都显式开启思考模式，并把显示名后缀（`high` / `max`）作为
+`thinking_strength` 传入。以 `deepseek-v4-pro-high` 为例，脚本内部构造：
 
-```json
-{"thinking": {"type": "enabled"}}
+```python
+LLMConfig(
+    model_name="deepseek-v4-pro",
+    thinking_mode=True,
+    thinking_strength="high",
+)
 ```
 
-相应地：
-
-- `deepseek-v4-pro` 会显式传入 `{"thinking": {"type": "disabled"}}`
-- `deepseek-v4-flash` 也会显式传入 `{"thinking": {"type": "disabled"}}`
+即请求中会携带 `extra_body={"thinking": {"type": "enabled"}}` 和
+`reasoning_effort="high"`；`max` 条目则携带 `reasoning_effort="max"`。
+其余三个非 DeepSeek 模型不传思考参数，按各自后端默认行为执行。
 
 ## API Key 与 Base URL
 
@@ -147,7 +154,7 @@
 
 ## 运行方式
 
-请在仓库根目录运行，例如：
+命令行风格与 contrast1 / contrast2 对齐，请在仓库根目录运行，例如完整跑一遍：
 
 ```bash
 export DEEPSEEK_API_KEY="你的 deepseek key"
@@ -155,22 +162,29 @@ export OPENROUTER_API_KEY="你的 openrouter key"
 export VVEAI_GEMINI_API_KEY="你的 gemini key"
 export VVEAI_GPT55_API_KEY="你的 gpt-5.5 key"
 
-uv run python experiment/contrast0/run_contrast0.py --seed 42 --workers 1
+uv run python experiment/contrast0/run_contrast0.py \
+  --models all --seeds 36 40 42 --resume
 ```
 
-只重跑更新后的 YHD、保留已有 UKB 汇总行时使用：
+只跑 DeepSeek 四个组合时：
 
 ```bash
 uv run python experiment/contrast0/run_contrast0.py \
-  --seed 42 --workers 1 --datasets YHD
+  --models deepseek-v4-pro-high,deepseek-v4-pro-max,deepseek-v4-flash-high,deepseek-v4-flash-max \
+  --seeds 36 40 42 --resume
 ```
 
 参数说明：
 
-- `--seed`：控制 `val/test/train` 抽样以及主流程随机种子
-- `--workers`：多进程并发数
+- `--models`：`all` 或逗号分隔的模型显示名列表
+- `--seeds`：一次运行多个种子，默认 `36 40 42`
+- `--seed`：兼容旧命令的单个种子覆盖（如 `--seed 42`）
+- `--datasets`：选择要运行的数据集（`UKB` / `YHD`）
+- `--workers`：多进程并发数，默认 `1`
 - `--output-root`：实验输出根目录，默认位于 `./experiment/contrast0/outputs`
-- `--datasets`：选择要运行的数据集；仅选择 `YHD` 时不会启动 UKB 任务，并会保留现有 `contrast0.csv` 中的 UKB 行
+- `--resume`：读取对应种子的结果 CSV，跳过已成功的 `(模型, 数据集)` 任务
+- `--retry-errors`：配合 `--resume` 使用，只重跑上次失败的 `(模型, 数据集)` 任务
+- `--rerun-existing`：配合 `--resume` 使用，强制重跑已选任务
 
 说明：
 
@@ -182,11 +196,13 @@ uv run python experiment/contrast0/run_contrast0.py \
 
 ### 汇总表
 
-脚本运行结束后会写出：
+脚本按种子写出结果 CSV（与 contrast1 / contrast2 的命名方式一致）：
 
-- `experiment/contrast0/contrast0.csv`
+- `experiment/contrast0/contrast0_rerun_seed{seed}.csv`，例如
+  `contrast0_rerun_seed36.csv` / `contrast0_rerun_seed40.csv` /
+  `contrast0_rerun_seed42.csv`
 
-该文件当前列为：
+该文件列为：
 
 - `大模型`
 - `数据集`
@@ -194,6 +210,8 @@ uv run python experiment/contrast0/run_contrast0.py \
 - `F1`
 - `Sensitivity`
 - `Specificity`
+- `status`（`ok` / `error`）
+- `error`（失败原因，成功时为空）
 
 排序顺序为：
 
@@ -202,8 +220,11 @@ uv run python experiment/contrast0/run_contrast0.py \
 
 需要注意：
 
-- 汇总表不包含 `status`、`error`、`out_dir` 等字段
-- 如果某个实验失败，脚本仍会保留这一行，但对应指标会是空字符串
+- 如果某个实验失败，脚本仍会保留这一行，但对应指标会是空字符串，
+  且 `status=error`
+- `--resume` 按 `(大模型, 数据集)` 粒度跳过该种子 CSV 中已成功的任务
+- 旧版 `contrast0.csv` 与 `contrast0_36/40/42.csv` 不再由本脚本写入，
+  保留为历史文件
 
 ### 单个实验目录
 
@@ -221,7 +242,7 @@ uv run python experiment/contrast0/run_contrast0.py \
 
 示例：
 
-- `experiment/contrast0/outputs/UKB/deepseek-v4-pro/20260525_123456/`
+- `experiment/contrast0/outputs/UKB/deepseek-v4-pro-high/20260525_123456/`
 - `experiment/contrast0/outputs/YHD/qwen_qwen3.7-max/20260525_123501/`
 
 单个实验目录通常包含：
