@@ -278,6 +278,13 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--output-root", type=str, default=str(script_dir / "outputs"))
+    p.add_argument(
+        "--datasets",
+        nargs="+",
+        choices=("UKB", "YHD"),
+        default=("UKB", "YHD"),
+        help="Datasets to run. Selecting only YHD preserves existing UKB summary rows.",
+    )
     args = p.parse_args()
 
     seed = int(args.seed)
@@ -364,10 +371,12 @@ def main() -> None:
         ),
     ]
 
-    datasets = [
+    all_datasets = [
         DatasetSpec("UKB", repo_root / "data" / "UKB.csv", "label"),
         DatasetSpec("YHD", repo_root / "data" / "YHD_bicarbonate.csv", "hospital_expire_flag"),
     ]
+    selected_dataset_names = set(args.datasets)
+    datasets = [ds for ds in all_datasets if ds.name in selected_dataset_names]
 
     tasks = [(ds, ms) for ms in models for ds in datasets]
     results: list[dict] = []
@@ -388,17 +397,28 @@ def main() -> None:
         ds = str(r.get("数据集", ""))
         return (model_order.get(m, 99), dataset_order.get(ds, 99))
 
+    out_csv = script_dir / "contrast0.csv"
+    rows_by_key: dict[tuple[str, str], dict] = {}
+    if out_csv.exists() and selected_dataset_names != {ds.name for ds in all_datasets}:
+        with out_csv.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                if str(row.get("数据集", "")) not in selected_dataset_names:
+                    rows_by_key[(str(row.get("大模型", "")), str(row.get("数据集", "")))] = row
+    for row in results:
+        rows_by_key[(str(row.get("大模型", "")), str(row.get("数据集", "")))] = row
+    results = list(rows_by_key.values())
     results.sort(key=sort_key)
 
-    out_csv = script_dir / "contrast0.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with out_csv.open("w", encoding="utf-8", newline="") as f:
+    temp_csv = out_csv.with_suffix(out_csv.suffix + ".tmp")
+    with temp_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
             fieldnames=["大模型", "数据集", "ACC", "F1", "Sensitivity", "Specificity"],
         )
         writer.writeheader()
         writer.writerows([{k: r.get(k, "") for k in writer.fieldnames} for r in results])
+    os.replace(temp_csv, out_csv)
 
     print(f"contrast0_csv={out_csv}", flush=True)
 

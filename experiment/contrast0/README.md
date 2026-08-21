@@ -158,11 +158,19 @@ export VVEAI_GPT55_API_KEY="你的 gpt-5.5 key"
 uv run python experiment/contrast0/run_contrast0.py --seed 42 --workers 1
 ```
 
+只重跑更新后的 YHD、保留已有 UKB 汇总行时使用：
+
+```bash
+uv run python experiment/contrast0/run_contrast0.py \
+  --seed 42 --workers 1 --datasets YHD
+```
+
 参数说明：
 
 - `--seed`：控制 `val/test/train` 抽样以及主流程随机种子
 - `--workers`：多进程并发数
 - `--output-root`：实验输出根目录，默认位于 `./experiment/contrast0/outputs`
+- `--datasets`：选择要运行的数据集；仅选择 `YHD` 时不会启动 UKB 任务，并会保留现有 `contrast0.csv` 中的 UKB 行
 
 说明：
 
