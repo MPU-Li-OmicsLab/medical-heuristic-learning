@@ -7,13 +7,18 @@ LogisticRegression、DecisionTree、MLP、XGBoost、LightGBM、DeepTab
 FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS。所有模型层自动类别
 平衡均关闭，训练数据在进入模型前构造成 1:1；HL 不重跑。
 
-正式种子为 `36 40 42`。UKB 的验证集/测试集各 1000 条，YHD 各 500 条，
-二者均为 1:1 且无重复。运行及断点续跑命令：
+正式种子为 `36 40 42`。更新后的 YHD 与 UKB 对齐：验证集和测试集均各为
+1000 条，按 `1:1` 无放回生成且源行互不重叠。只重跑 YHD baseline、保留已有
+UKB 结果的命令：
 
 ```bash
 uv run python experiment/contrast1/run_contrast1_balance.py \
-  --models all --seeds 36 40 42 --resume
+  --models all --seeds 36 40 42 --datasets YHD \
+  --resume --rerun-existing
 ```
+
+`--resume` 会读取现有逐 seed CSV，以保留未选择的 UKB 行；`--rerun-existing`
+确保旧的 YHD `status=ok` 行也会用更新后的数据重新运行。
 
 逐 seed 结果写入 `contrast1_balance_rerun_seed<seed>.csv`，模型、预测、指标和
 数据清单写入 `experiment/outputs_rerun/contrast1/`。以下内容保留用于说明旧脚本和
@@ -70,39 +75,27 @@ uv run python experiment/contrast1/run_contrast1_balance.py \
 - `50`
 - `10`
 
-## 三个脚本的差异
+## 两个脚本的差异
 
-### 1. `run_contrast1.py`
+旧入口 `run_contrast1.py` 已从当前代码中移除，不再作为本实验的 baseline。
+当前常规模型 baseline 是 `run_contrast1_balance.py`，并统一复用
+`experiment/modeling/`：模型层的类别不平衡自动修正全部关闭，不使用类别权重、
+样本权重、加权采样或按类别比例调整的损失函数。
 
-标准常规模型对比脚本：
-
-- 训练集从 `train_pool` 中随机无放回抽样
-- 不强制训练集类别平衡
-- 但部分模型会启用类别不平衡修正：
-  - `LogisticRegression` 使用 `class_weight="balanced"`
-  - `DecisionTree` 使用 `class_weight="balanced"`
-  - `XGBoost` 使用基于训练标签计算的 `scale_pos_weight`
-  - `LightGBM` 使用 `is_unbalance=True`
-
-输出文件：
-
-- `experiment/contrast1/contrast1.csv`
-- `experiment/contrast1/checkpoints/...`（仅 FT-Transformer）
-
-### 2. `run_contrast1_balance.py`
+### 1. `run_contrast1_balance.py`
 
 平衡训练集版本：
 
 - 训练集按 `1:1` 正负类采样
 - 若某一类样本不足，会对该类启用有放回采样
-- 其它整体实验框架与 `run_contrast1.py` 类似
+- 上述比例只由实验数据采样构造，baseline 模型不会再做类别不平衡修正
 
 输出文件：
 
-- `experiment/contrast1/contrast1_balance.csv`
-- `experiment/contrast1/checkpoints_balance/...`（仅 FT-Transformer）
+- `experiment/contrast1/contrast1_balance_rerun_seed<SEED>.csv`
+- `experiment/outputs_rerun/contrast1/...`
 
-### 3. `run_contrast1_balance_hl.py`
+### 2. `run_contrast1_balance_hl.py`
 
 启发式学习系统 `HL` 的平衡训练集版本：
 
@@ -118,7 +111,7 @@ uv run python experiment/contrast1/run_contrast1_balance.py \
 
 ## 常规模型列表
 
-`run_contrast1.py` 与 `run_contrast1_balance.py` 会比较以下模型：
+`run_contrast1_balance.py` 会比较以下模型：
 
 - `LogisticRegression`
 - `DecisionTree`
