@@ -1,233 +1,89 @@
-# Continuous Learning
+# Continual-learning experiment
 
-## 普通模型统一重跑（当前方案）
+This directory contains the current three-endpoint experiment for MIMIC:
 
-普通 baseline 现统一为十个模型：LogisticRegression、DecisionTree、MLP、XGBoost、
-LightGBM、DeepTab FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS。
-随机种子固定为 `36、40、42`；Stage 1 为训练 1000、验证 500、测试 800，Stage 2
-为训练 40、验证 500、测试 800，全部在模型训练前构造成 1:1。HL 不重跑。
+1. `stage1_direct_train1000`
+2. `stage2_continual_from_stage1_train40`
+3. `stage2_direct_train40`
 
-五个新增模型在 Stage 2 使用 `prior_feature_cascade`；其中 CORELS 使用 0/1 先验，
-其余使用 Stage 1 正类概率。生成先验时只按特征名使用 Stage 1 兼容视图，缺失的
-SIRS 由 Stage 1 训练统计量填充，并忽略 Stage 2 的 SOFA。
+All endpoints use seeds 36, 40, and 42. The frozen data partition is defined
+in `continuous_learning_experiment_common.py`: Stage 1 uses 1,000/500/800
+train/validation/test rows and SIRS, while Stage 2 uses 40/500/800 disjoint
+rows and SOFA.
+
+## Models
+
+The retained comparison contains MLP, XGBoost, LightGBM, EBM,
+FT-Transformer, ResNet, and HL.
+
+Baseline continuation is implemented as follows:
+
+- MLP: continued parameters through epoch-wise `partial_fit`.
+- XGBoost: continued booster through `xgb_model`.
+- LightGBM: continued booster through `init_model`.
+- EBM: Stage 1 raw score supplied as Stage 2 `init_score` at fitting and
+  prediction.
+- FT-Transformer and ResNet: exact in-memory Stage 1 state transfer, a fresh
+  optimizer, and a lower Stage 2 learning rate.
+
+HL Stage 2 direct training calls the standard `hl.orchestrator` from scratch.
+It does not read a Stage 1 model or consume Stage 1 training rows. HL exposes
+hard labels rather than probabilities, so its `positive_probability` artifact
+column contains the hard label cast to 0.0/1.0; this is explicitly recorded in
+each run manifest.
+
+## Code layout
+
+| File | Role |
+|---|---|
+| `continuous_learning_experiment_common.py` | Shared data flow: frozen two-stage partition, result CSV schema, stage/dataset dataclasses |
+| `continuous_baseline_v2.py` | Per-model transfer implementations for the six baselines |
+| `run_continuous_learning_baselines_v2.py` | Baseline runner (6 models x 3 seeds x 3 endpoints) |
+| `run_continuous_learning_hl_v2.py` | HL Stage 2 direct-training runner; guards the previously completed HL rows |
+| `verify_continuous_baselines_v2.py` | Artifact verification: row keys, frozen test rows, metric recomputation, transfer consistency |
+
+The earlier gated A->B hyperparameter-search runner was removed from this
+directory. Its full attempt audit (per-attempt temperatures, priorities and
+validation metrics for every trial) is archived at
+`experiment/outputs_rerun/continuous_learning_v2_hl_ab_search_20260821_archive.tar.gz`.
+
+## Run
+
+Run or rerun all baselines:
 
 ```bash
-uv run python experiment/continuous_learning/run_continuous_learning_baselines.py \
+CUDA_VISIBLE_DEVICES=1 uv run python \
+  experiment/continuous_learning/run_continuous_learning_baselines_v2.py \
   --models all --seeds 36 40 42 --resume
 ```
 
-结果写入 `continuous_baselines_rerun_results.csv`，产物位于
-`experiment/outputs_rerun/continuous_learning/`。旧的 baseline 与 HL CSV 均不覆盖。
-
-本目录现在位于 `experiment/continuous_learning/`，用于保存持续学习相关文档与实验输出；持续学习启发式学习的代码主干位于 `hl/continuous_learning/`。实验脚本已拆分为共享数据流模块、HL 持续学习脚本、Baseline 对比脚本和总控入口脚本。
-
-## 新结构
-- 持续学习主干包：`hl/continuous_learning/`
-- 主入口函数：`hl.continuous_learning.run_continuous_learning(...)`
-- 共享数据流模块：`experiment/continuous_learning/continuous_learning_experiment_common.py`
-- HL 持续学习脚本：`experiment/continuous_learning/run_continuous_learning_hl.py`
-- Baseline 对比脚本：`experiment/continuous_learning/run_continuous_learning_baselines.py`
-- 总控入口：`experiment/continuous_learning/run_continuous_learning_experiment.py`
-- 实验输出目录：`experiment/continuous_learning/outputs/`
-- HL 结果总表：`experiment/continuous_learning/continuous_hl_results.csv`
-- Baseline 结果总表：`experiment/continuous_learning/continuous_baseline_results.csv`
-- 合并结果总表：`experiment/continuous_learning/continuous_results.csv`
-
-## 设计目标
-- 将“持续学习启发式学习主干”和“外部 baseline 对比实验”彻底拆开。
-- 持续学习主干沿用 `hl/orchestrator` 的模块化风格，拆成 probe1、probe2、v0 生成、主编排器等独立文件。
-- 在发生特征漂移时，基于旧策略与新数据共同生成新策略，而不是从零开始重训规则。
-- 第二阶段在生成新 `v0` 后，直接调用 `hl.orchestrator.iteration_step.run_iterations_task(...)` 做迭代，不再绕回普通 `hl.orchestrator.run_heuristic_learning(...)`。
-
-## 代码布局
-- `hl/continuous_learning/config.py`
-  持续学习专用配置对象：`DriftConfig`、`ContinuousLearningConfig`、`ContinuousLearningResult`。
-- `hl/continuous_learning/univariate_probe_step.py`
-  负责 Probe 1 的持续学习更新：复制旧单变量分析、同步删除和重命名、追加新增或恢复变量的统计结果。
-- `hl/continuous_learning/knowledge_probe_step.py`
-  负责 Probe 2 的持续学习更新：复制旧知识表、同步删除和重命名、为新增或恢复变量补充知识条目。
-- `hl/agent/continuous_prompts.py`
-  集中维护持续学习专用 prompt，包括知识探测、连续版 `v0` 生成与迭代优化提示词。
-- `hl/continuous_learning/v0_generation_step.py`
-  负责持续学习版 `v0` 的提示词构造与生成，会把旧 `final_heuristic_model.py` 作为蓝本。
-- `hl/continuous_learning/iteration_step.py`
-  持续学习专用迭代优化逻辑，复用标准 HL 的评估/校验策略，但使用独立 prompt 构造。
-- `hl/continuous_learning/main_orchestrator.py`
-  持续学习主编排器，统一串联 probe 更新、连续版 `v0` 生成、迭代优化、最终模型导出。
-- `experiment/continuous_learning/continuous_learning_experiment_common.py`
-  共享实验数据流，统一处理固定实验配置、两阶段漂移配置、平衡切分、训练采样以及结果 CSV 写入。
-- `experiment/continuous_learning/run_continuous_learning_hl.py`
-  只运行两阶段 HL 持续学习，并保存 HL 专属结果表。
-- `experiment/continuous_learning/run_continuous_learning_baselines.py`
-  只运行 Baseline 对比模型，并复用同一份两阶段数据流。
-- `experiment/continuous_learning/run_continuous_learning_experiment.py`
-  总控入口，依次调用 HL 与 Baseline 两个脚本逻辑，并写出合并总表。
-
-## 持续学习主干接口
-
-持续学习主干入口为：
-
-```python
-from hl.config import LLMConfig
-from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
-```
-
-调用形式为：
-
-```python
-result = run_continuous_learning(
-    train_df=train_df,
-    val_df=val_df,
-    label_col=label_col,
-    llm_cfg=llm_cfg,
-    continuous_cfg=ContinuousLearningConfig(
-        task_description="Continuous learning example.",
-        drift=DriftConfig(
-            dropped_cols=("old_feature",),
-            added_cols=("new_feature",),
-            renamed_cols=(("old_name", "new_name"),),
-            change_note="Describe the drift clearly.",
-            prev_hl_out_dir=prev_out_dir,
-        )
-    ),
-)
-```
-
-返回值 `result` 中包含：
-- `out_dir`
-- `heuristic_path`
-- `final_model_path`
-
-## 默认输出目录规则
-- 普通 HL 在 `RunConfig.output_dir is None` 时，会写到 `out/<timestamp>/`。
-- 持续学习 HL 在 `ContinuousLearningConfig.output_dir is None` 时，会写到 `out/<timestamp>_continuous_learning/`。
-- 如果显式传入 `output_dir`，则完全使用传入路径。
-
-## 持续学习主干的执行顺序
-- 校验 `train_df`、`val_df` 与 `label_col`。
-- 根据 `ContinuousLearningConfig` 中的漂移与运行配置记录当前上下文。
-- 更新 Probe 1：
-  读取旧 `probe_univariate_results.csv`，删除失效特征，同步 rename，并对新增或恢复特征补充新分析。
-- 更新 Probe 2：
-  读取旧 `probe_knowledge.md`，删除失效特征，同步 rename，并对新增或恢复特征补充新知识。
-- 生成连续学习版 `v0`：
-  读取旧 `final_heuristic_model.py` 作为 blueprint，结合漂移信息、新 probe 结果和任务描述构造 prompt。
-- 直接调用 `run_iterations_task(...)` 做版本迭代。
-- 从所有版本中选择最佳版本并导出新的 `final_heuristic_model.py`。
-
-## 提示词与追溯文件
-
-持续学习输出目录中会写入以下关键文件：
-- `continuous_learning_context.json`
-  记录本次持续学习的 `task_description`、漂移配置与旧输出目录。
-- `probe_univariate_results_prev.csv`
-  上一阶段或上一套系统的 Probe 1 快照。
-- `probe_univariate_results.csv`
-  本轮更新后的 Probe 1 结果。
-- `probe_knowledge_prev.md`
-  上一阶段或上一套系统的 Probe 2 快照。
-- `probe_knowledge.md`
-  本轮更新后的 Probe 2 结果。
-- `iteration_log.json`
-  逐轮迭代日志。
-- `final_comparison.txt`
-  `v0`、最佳版本、最后版本的指标对比。
-
-## 实验入口职责
-
-- 共享模块 `continuous_learning_experiment_common.py` 负责：
-- 写死实验配置，不再解析命令行参数。
-- 固定读取 `data/merged_by_subject_id_complete_rows_without_unit_cols_renamed.csv`。
-- 固定数据集为 `MIMIC`，标签列为 `death_within_hosp_28days`。
-- 固定随机种子为 `36`、`40`、`42`。
-- 固定两阶段特征集合：
-  Stage1 使用 `SIRS`，Stage2 删除 `SIRS` 并增加 `SOFA`。
-- 应用两阶段特征漂移。
-- 做平衡抽样：
-  Stage1 训练集 1000、验证集 500、测试集 800；Stage2 训练集 40、验证集 500、测试集 800。
-- `run_continuous_learning_hl.py` 负责：
-- 调用 `hl.continuous_learning.run_continuous_learning(...)` 完成两个阶段的 HL 持续学习。
-- 在 held-out test 上评估 HL。
-- 汇总到 `experiment/continuous_learning/continuous_hl_results.csv`。
-- `run_continuous_learning_baselines.py` 负责：
-- 训练并评估本节所列十个 baseline；统一重跑结果写入
-  `experiment/continuous_learning/continuous_baselines_rerun_results.csv`，旧结果文件保持不动。
-- `run_continuous_learning_experiment.py` 负责：
-- 依次运行 HL 与 Baseline 两条链路。
-- 汇总到 `experiment/continuous_learning/continuous_results.csv`。
-
-## 数据流一致性
-- HL 与 Baseline 不再各自实现一套取数逻辑，而是统一复用 `continuous_learning_experiment_common.py`。
-- 两边都使用同一套：
-  平衡划分、训练采样、阶段定义、漂移应用和随机种子规则。
-- 共享模块会在阶段 manifest 中记录 source row ids，因此可以追溯并核对两个脚本在相同 seed 下得到的是同一批样本。
-
-## 两阶段漂移规则
-- Stage1 使用原始 ICU 基线特征集合，其中包含 `SIRS`。
-- Stage2 删除 `SIRS`，并增加 `SOFA`。
-- Stage2 的 `prev_hl_out_dir` 固定指向 Stage1 的 HL 输出目录，因此第二阶段总是在第一阶段规则基础上继续适配。
-
-## 运行实验示例
+Run or resume direct Stage 2 HL:
 
 ```bash
-cd /home/xw/medical-heuristic-learning
-export DEEPSEEK_API_KEY="你的key"
-
-uv run python experiment/continuous_learning/run_continuous_learning_hl.py
-uv run python experiment/continuous_learning/run_continuous_learning_baselines.py
-uv run python experiment/continuous_learning/run_continuous_learning_experiment.py
+CUDA_VISIBLE_DEVICES=1 uv run python \
+  experiment/continuous_learning/run_continuous_learning_hl_v2.py \
+  --seeds 36 40 42 --resume
 ```
 
-## 最小代码示例
+The HL command sends derived medical-data context to the configured external
+DeepSeek API and therefore requires explicit authorization and
+`DEEPSEEK_API_KEY`.
 
-如果你只想调用持续学习主干，而不跑 baseline，可以直接在 Python 中调用：
+Verify the combined experiment:
 
-```python
-from pathlib import Path
-
-import pandas as pd
-
-from hl.config import LLMConfig
-from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
-
-
-data = pd.read_csv("./data/MIMIC.csv")
-label_col = "death_within_hosp_28days"
-
-train_df = data.iloc[:1000].copy()
-val_df = data.iloc[1000:1500].copy()
-
-llm_cfg = LLMConfig(
-    base_url="https://api.deepseek.com/v1",
-    api_key_env="DEEPSEEK_API_KEY",
-    model_name="deepseek-v4-pro",
-    temperature=0.0,
-)
-
-continuous_cfg = ContinuousLearningConfig(
-    output_dir=None,
-    run_univariate_probe=True,
-    run_knowledge_probe=True,
-    run_v0_generation=True,
-    run_iterations=True,
-    task_description="Continuous learning for binary clinical risk prediction.",
-    drift=DriftConfig(
-        dropped_cols=("old_feature",),
-        added_cols=("new_feature",),
-        renamed_cols=(),
-        change_note="Example drift note.",
-        prev_hl_out_dir=Path("./path/to/previous_hl_output"),
-    ),
-)
-
-result = run_continuous_learning(
-    train_df=train_df,
-    val_df=val_df,
-    label_col=label_col,
-    llm_cfg=llm_cfg,
-    continuous_cfg=continuous_cfg,
-)
-
-print(result.out_dir)
-print(result.final_model_path)
+```bash
+uv run python experiment/continuous_learning/verify_continuous_baselines_v2.py
 ```
+
+## Outputs
+
+- Combined results: `continuous_baselines_v2_results.csv`
+- Models and endpoint artifacts:
+  `experiment/outputs_rerun/continuous_learning_v2/`
+
+The combined CSV has 63 rows: seven models, three seeds, and three endpoints.
+The six Stage 1/continual HL rows were migrated from the previously completed
+HL experiment and aligned to the V2 endpoint/status names. Their original
+artifact paths belong to the former workspace and are retained only as
+provenance; the three new direct Stage 2 HL artifacts use the current V2
+layout and are fully verified.

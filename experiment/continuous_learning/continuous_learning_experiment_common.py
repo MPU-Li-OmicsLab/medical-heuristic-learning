@@ -1,3 +1,10 @@
+"""Shared data-flow foundation for the continual-learning experiment.
+
+Owns the frozen two-stage data partition (SIRS -> SOFA feature drift), the
+result CSV schema, and the stage/dataset dataclasses consumed by both the
+baseline and HL runners. It contains no training logic.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -13,7 +20,7 @@ from hl.continuous_learning import DriftConfig
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROW_ID_COL = "__continuous_row_id__"
-OUTPUT_ROOT = SCRIPT_DIR / "outputs"
+OUTPUT_ROOT = REPO_ROOT / "experiment" / "outputs_rerun" / "continuous_learning_v2"
 MIMIC_CSV_PATH = REPO_ROOT / "data" / "merged_by_subject_id_complete_rows_without_unit_cols_renamed.csv"
 MIMIC_LABEL_COL = "death_within_hosp_28days"
 DEFAULT_SEEDS = (36, 40, 42)
