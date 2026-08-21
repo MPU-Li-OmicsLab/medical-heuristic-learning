@@ -84,7 +84,12 @@ Continuous learning additionally writes the drift context and previous probe sna
 - `example_continuous_learning.py`
   Continuous learning example that drops the `wbc` feature and writes to `./example_out_continuous_learning`.
 - `experiment/`
-  Experiment suites separated from the reusable `hl/` core.
+  Experiment suites separated from the reusable `hl/` core. `experiment/modeling/`
+  is the shared comparison-model layer; `experiment/outputs_rerun/` holds rerun
+  artifacts and manifests.
+- `RUN_GUIDE.md`
+  Chinese quick-start guide covering installation, the root examples, `RunConfig`
+  switches, and experiment commands.
 
 ## Artifact Contracts
 
@@ -107,25 +112,32 @@ The generated rule files are not arbitrary outputs; downstream scripts assume sp
 
 Requirements:
 
-- Python `>=3.11`
+- Python `>=3.11,<3.14` (the upper bound follows the DeepTab 2.0.0 requirement)
 - recommended package manager: `uv`
 
-Install the base dependency set:
+Install the full dependency set used by examples and experiments
+(`uv` installs the `dev` group by default):
 
 ```bash
 uv sync
 ```
 
-Install the full dependency set used by examples and experiments:
+Install only the base dependency set:
 
 ```bash
-uv sync --group dev
+uv sync --no-dev
 ```
 
 Current dependency groups in `pyproject.toml` are:
 
-- runtime: `numpy`, `openai`, `pandas`, `scipy`
-- dev: `scikit-learn`, `lightgbm`, `torch`, `xgboost`
+- runtime: `numpy`, `openai`, `pandas` (pinned `<3.0`), `scipy`, `socksio`
+- dev: `scikit-learn`, `lightgbm`, `torch`, `xgboost`, `deeptab==2.0.0`,
+  `interpret-core[aplr]==0.7.8`, `aplr==10.23.0`, `corels==1.1.29`,
+  `cython`, `setuptools`, `wheel`
+
+The official `corels` 1.1.29 sdist requires a C++ toolchain; on fresh
+Python 3.11 / NumPy 2 environments regenerate its C++ from `_corels.pyx` with the
+dev-group Cython 3 before building the wheel (see `RUN_GUIDE.md`).
 
 Practical note: the current core metric implementation in `hl/metrics.py` imports `scikit-learn`, so full end-to-end training and continuous learning runs require the `dev` group as the code exists today.
 
@@ -426,6 +438,11 @@ Behavior summary:
 
 The `experiment/` directory is separate from the reusable `hl/` core. Current subdirectories are:
 
+- `experiment/modeling/`
+  shared configuration, construction, training, and evaluation for the ten
+  ordinary comparison models (`config.py`, `models.py`, `train_eval.py`).
+  Model-level automatic class balancing is disabled; class ratios are fixed only
+  during data construction.
 - `experiment/ablation/`
   probe and workflow ablation studies.
 - `experiment/contrast0/`
@@ -436,11 +453,23 @@ The `experiment/` directory is separate from the reusable `hl/` core. Current su
 - `experiment/contrast2/`
   comparisons focused on class ratio with the same ten-model configuration.
 - `experiment/continuous_learning/`
-  multi-stage continuous learning experiments and baseline comparisons, including
-  prior-feature cascades for DeepTab FT-Transformer/ResNet, EBM, APLR, and CORELS.
+  the v2 three-endpoint continual-learning experiment:
+  `stage1_direct_train1000`, `stage2_continual_from_stage1_train40`, and
+  `stage2_direct_train40`, with seeds 36/40/42. HL is compared against six
+  baselines (MLP, XGBoost, LightGBM, EBM, DeepTab FT-Transformer, DeepTab ResNet)
+  with per-model Stage 1 -> Stage 2 transfer strategies under SIRS -> SOFA feature
+  drift. The earlier gated A->B hyperparameter-search runner was removed; its audit
+  is archived under `experiment/outputs_rerun/`.
+- `experiment/outputs_rerun/`
+  model artifacts, predictions, metrics, and run manifests for the rerun
+  experiments.
+- `experiment/RERUN_TRAINING_REPORT.md`
+  implementation and training-progress report for the comparison rerun.
 - `experiment/EXPERIMENT_EXTENSION_PLAN.md`
   reproducible configuration, data-split contract, commands, and output contract
-  for the current comparison rerun. Existing HL results are reused rather than rerun.
+  for the contrast1/contrast2 rerun. Existing HL results are reused rather than
+  rerun; its continuous-learning section predates the v2 redesign and is kept for
+  historical reference.
 
 Each experiment subdirectory contains its own README with dataset requirements and commands.
 

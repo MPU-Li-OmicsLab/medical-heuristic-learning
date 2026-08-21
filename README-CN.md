@@ -84,7 +84,10 @@ Medical Heuristic Learning（MHL）是一个面向临床表格预测的轻量级
 - `example_continuous_learning.py`
   删除 `wbc` 特征以模拟漂移，并输出到 `./example_out_continuous_learning`。
 - `experiment/`
-  与可复用 `hl/` 主干分离的实验目录。
+  与可复用 `hl/` 主干分离的实验目录；`experiment/modeling/` 是共享的对比
+  模型层，`experiment/outputs_rerun/` 保存重跑实验的产物与 manifest。
+- `RUN_GUIDE.md`
+  中文快速上手指南：安装、根目录示例、`RunConfig` 开关与实验命令。
 
 ## 产物契约
 
@@ -107,25 +110,31 @@ Medical Heuristic Learning（MHL）是一个面向临床表格预测的轻量级
 
 环境要求：
 
-- Python `>=3.11`
+- Python `>=3.11,<3.14`（上限来自 DeepTab 2.0.0 的依赖约束）
 - 推荐包管理器：`uv`
 
-安装基础依赖：
+安装示例和实验常用的完整依赖（`uv` 默认就会安装 `dev` 组）：
 
 ```bash
 uv sync
 ```
 
-安装示例和实验常用的完整依赖：
+仅安装基础依赖时：
 
 ```bash
-uv sync --group dev
+uv sync --no-dev
 ```
 
 `pyproject.toml` 中当前的依赖分组为：
 
-- 运行时：`numpy`、`openai`、`pandas`、`scipy`
-- 开发组：`scikit-learn`、`lightgbm`、`torch`、`xgboost`
+- 运行时：`numpy`、`openai`、`pandas`（固定 `<3.0`）、`scipy`、`socksio`
+- 开发组：`scikit-learn`、`lightgbm`、`torch`、`xgboost`、`deeptab==2.0.0`、
+  `interpret-core[aplr]==0.7.8`、`aplr==10.23.0`、`corels==1.1.29`、
+  `cython`、`setuptools`、`wheel`
+
+官方 `corels` 1.1.29 源码包需要 C++ 工具链；在全新 Python 3.11 / NumPy 2
+环境下，需先用 dev 组中的 Cython 3 从 `_corels.pyx` 重新生成 C++ 再构建 wheel
+（详见 `RUN_GUIDE.md`）。
 
 实际运行提示：当前 `hl/metrics.py` 会直接导入 `scikit-learn` 计算指标，因此按照现有代码，若要运行完整训练或持续学习流程，应安装 `dev` 依赖组。
 
@@ -426,16 +435,32 @@ def run_continuous_learning(
 
 `experiment/` 与可复用的 `hl/` 主干分离。当前子目录包括：
 
+- `experiment/modeling/`
+  十个普通对比模型的统一配置、构造、训练与评估层（`config.py`、`models.py`、
+  `train_eval.py`）；模型层自动类别平衡已关闭，类别比例只在数据构造阶段确定。
 - `experiment/ablation/`
   探针与流程消融实验。
 - `experiment/contrast0/`
   不同 LLM 后端的对比实验。
 - `experiment/contrast1/`
-  以训练集规模为重点的对比实验。
+  以训练集规模为重点的对比实验；当前重跑使用十个普通模型、种子 36/40/42，
+  且关闭模型层自动类别平衡。
 - `experiment/contrast2/`
-  以类别比例为重点的对比实验。
+  以类别比例为重点的对比实验，采用与 contrast1 相同的十模型配置。
 - `experiment/continuous_learning/`
-  多阶段持续学习实验与 baseline 对比。
+  重构后的 v2 三分支持续学习实验：`stage1_direct_train1000`、
+  `stage2_continual_from_stage1_train40`、`stage2_direct_train40`，种子
+  36/40/42。在 SIRS → SOFA 特征漂移下比较 HL 与六个 baseline（MLP、XGBoost、
+  LightGBM、EBM、DeepTab FT-Transformer、DeepTab ResNet），各模型使用专属的
+  Stage 1 → Stage 2 迁移策略。早期的门控 A→B 超参搜索运行器已移除，其审计记录
+  归档在 `experiment/outputs_rerun/`。
+- `experiment/outputs_rerun/`
+  重跑实验的模型产物、预测、指标与运行 manifest 归档。
+- `experiment/RERUN_TRAINING_REPORT.md`
+  对比实验重跑的实施与训练进度报告。
+- `experiment/EXPERIMENT_EXTENSION_PLAN.md`
+  contrast1/contrast2 重跑的可复现配置、数据切分契约、命令与输出契约；HL 结果
+  直接复用不重跑。其中持续学习章节早于 v2 重构，仅作历史参考。
 
 每个实验子目录都提供自己的 README，说明数据要求与运行命令。
 
