@@ -178,6 +178,11 @@ run_cfg = RunConfig(
 
 - `base_url`：`https://api.deepseek.com/v1`（OpenAI 兼容接口路径前缀）
 - `model_name`：例如 `deepseek-v4-pro`
+- `thinking_mode`：DeepSeek 思考模式开关，默认 `None`（不干预，
+  按后端官方默认；DeepSeek 当前默认开启思考、effort 为 `high`）
+- `thinking_strength`：思考强度，思考开启时作为 `reasoning_effort` 发送；
+  取值 `low` / `medium` / `high` / `xhigh` / `max`，缺省使用
+  DeepSeek 服务端默认值（`high`）
 
 如果你想临时改模型，最直接方式是在 `example_training.py` 里：
 
@@ -186,6 +191,22 @@ from hl.config import LLMConfig
 
 llm_cfg = LLMConfig(model_name="deepseek-v4-pro")
 ```
+
+需要开启思考模式的实验配置示例：
+
+```python
+llm_cfg = LLMConfig(
+    model_name="deepseek-v4-pro",
+    thinking_mode=True,
+    thinking_strength="high",
+)
+```
+
+说明：`thinking_mode=None`（默认）时不发送任何 `thinking` 参数，完全交给
+后端官方默认（DeepSeek 当前默认开启思考、effort 为 `high`）；`True`/`False`
+才显式发送 `enabled`/`disabled`。单独设置 `thinking_strength` 而未显式指定
+`thinking_mode` 时，等价于开启思考并指定强度。若 `extra_body` 已自带
+`thinking` 键，则以 `extra_body` 为准，保证旧配置完全兼容。
 
 ## 7. 对比实验命令（简要）
 

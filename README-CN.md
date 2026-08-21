@@ -290,12 +290,31 @@ print(result.final_model_path)
 | `model_name` | `str` | `"deepseek-v4-pro"` | 传给 OpenAI 兼容 client 的模型名。 |
 | `temperature` | `float` | `0.3` | 采样温度。 |
 | `extra_body` | `dict \| None` | `None` | 后端特定能力需要的额外请求体。 |
+| `thinking_mode` | `bool \| None` | `None` | DeepSeek 思考模式开关。`None`（默认）不发送任何参数，完全按后端官方默认（DeepSeek 当前默认开启思考、effort 为 `high`）；`True`/`False` 显式开启/关闭。 |
+| `thinking_strength` | `str \| None` | `None` | 思考开启时作为 `reasoning_effort` 传入的思考强度，取值 `low` / `medium` / `high` / `xhigh` / `max`；`thinking_mode` 为 `None` 时设置它会自动开启思考。 |
 
 Key 解析逻辑：
 
 - 若传入 `api_key`，直接使用；
 - 否则读取 `api_key_env` 指定的环境变量；
 - 若启用了 LLM 且两者都不可用，则初始化 client 时抛错。
+
+思考模式行为：
+
+- `thinking_mode=None`（默认值）不发送任何 `thinking` 参数，完全按后端官方默认（DeepSeek 当前默认开启思考，effort 默认 `high`）。
+- `thinking_mode=True` 时发送 `extra_body={"thinking": {"type": "enabled"}}`；`thinking_mode=False` 时发送 `extra_body={"thinking": {"type": "disabled"}}`。
+- 思考开启且设置了 `thinking_strength` 时，同时发送 OpenAI 兼容的 `reasoning_effort` 参数；`thinking_mode` 为 `None` 时单独设置强度会自动开启思考。
+- 若 `extra_body` 中已包含 `thinking` 键，则该键优先，旧的底层配置保持完全向后兼容。
+
+示例：
+
+```python
+llm_cfg = LLMConfig(
+    api_key="your-api-key",
+    thinking_mode=True,
+    thinking_strength="high",
+)
+```
 
 ### `RunConfig`
 

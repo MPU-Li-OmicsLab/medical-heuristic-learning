@@ -293,12 +293,31 @@ Configuration for the OpenAI-compatible backend.
 | `model_name` | `str` | `"deepseek-v4-pro"` | Model name passed to the OpenAI-compatible client. |
 | `temperature` | `float` | `0.3` | Sampling temperature. |
 | `extra_body` | `dict \| None` | `None` | Optional backend-specific extra request payload. |
+| `thinking_mode` | `bool \| None` | `None` | DeepSeek thinking mode switch. `None` (default) sends nothing and follows the backend's official default (DeepSeek: thinking enabled, effort `high`); `True`/`False` explicitly enable/disable thinking. |
+| `thinking_strength` | `str \| None` | `None` | Thinking effort passed as `reasoning_effort` when thinking is enabled; one of `low`, `medium`, `high`, `xhigh`, `max`. Setting it while `thinking_mode` is `None` turns thinking on with that effort. |
 
 Key resolution behavior:
 
 - use `api_key` if it is provided;
 - otherwise read the environment variable named by `api_key_env`;
 - if LLM usage is enabled and neither is available, client construction raises an error.
+
+Thinking mode behavior:
+
+- `thinking_mode=None` (the default) sends no `thinking` parameter, so the backend's official default applies (DeepSeek enables thinking mode with default effort `high`).
+- `thinking_mode=True` sends `extra_body={"thinking": {"type": "enabled"}}`; `thinking_mode=False` sends `extra_body={"thinking": {"type": "disabled"}}`.
+- When thinking is enabled and `thinking_strength` is set, the OpenAI-compatible `reasoning_effort` parameter is also sent; setting a strength while `thinking_mode` is `None` enables thinking automatically.
+- If `extra_body` already contains a `thinking` key, that key wins, so existing low-level configurations remain fully backward compatible.
+
+Example:
+
+```python
+llm_cfg = LLMConfig(
+    api_key="your-api-key",
+    thinking_mode=True,
+    thinking_strength="high",
+)
+```
 
 ### `RunConfig`
 
