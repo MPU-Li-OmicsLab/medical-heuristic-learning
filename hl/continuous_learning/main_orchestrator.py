@@ -125,7 +125,10 @@ def run_continuous_learning(
     metric_desc = generate_metric_description(run_cfg.metric_priority)
     client: LLMClient | None = None
     if continuous_cfg.llm_enabled:
-        log_progress("HL-CL", f"Initializing LLM client with model={llm_cfg.model_name}.")
+        log_progress(
+            "HL-CL",
+            f"Initializing LLM client with model={llm_cfg.model_name}, thinking_mode={llm_cfg.thinking_mode}.",
+        )
         client = LLMClient(
             base_url=llm_cfg.base_url,
             api_key_env=llm_cfg.api_key_env,
@@ -133,6 +136,8 @@ def run_continuous_learning(
             temperature=llm_cfg.temperature,
             api_key=llm_cfg.api_key,
             extra_body=llm_cfg.extra_body,
+            thinking_mode=llm_cfg.thinking_mode,
+            thinking_strength=llm_cfg.thinking_strength,
         )
     else:
         log_progress("HL-CL", "LLM is disabled; continuous run will reuse existing artifacts where possible.")

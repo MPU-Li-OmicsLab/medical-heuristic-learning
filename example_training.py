@@ -37,6 +37,11 @@ def main() -> None:
         # export DEEPSEEK_API_KEY=sk-xxxxxx
         model_name="deepseek-v4-pro",
         temperature=0.3,
+        # Optional DeepSeek thinking-mode controls. Unset values follow the
+        # backend's official default (DeepSeek: thinking on, effort "high").
+        # thinking_mode=True,   # explicitly enable thinking
+        # thinking_mode=False,  # explicitly disable thinking
+        # thinking_strength="high",  # low / medium / high / xhigh / max
     )
     run_heuristic_learning(train_df=train_df, val_df=val_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
 

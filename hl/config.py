@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+# Values accepted by LLMConfig.thinking_strength. The value is passed through
+# verbatim as the OpenAI-compatible "reasoning_effort" request parameter.
+# DeepSeek documents low/high/max for the OpenAI format and additionally accepts
+# the aliases medium and xhigh (both are mapped to "high" server-side).
+# See https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+THINKING_STRENGTH_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+
 
 @dataclass(frozen=True)
 class LLMConfig:
@@ -12,6 +19,12 @@ class LLMConfig:
     model_name: str = "deepseek-v4-pro"
     temperature: float = 0.3
     extra_body: dict | None = None
+    # DeepSeek thinking-mode controls. Both fields are optional and append-only,
+    # so configs created before this change keep working unchanged.
+    # thinking_mode=None follows the backend's official default (DeepSeek currently
+    # enables thinking mode by default); True/False explicitly force it on/off.
+    thinking_mode: bool | None = None
+    thinking_strength: str | None = None
 
 
 @dataclass(frozen=True)
