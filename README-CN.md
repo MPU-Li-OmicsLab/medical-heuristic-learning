@@ -272,9 +272,10 @@ print(result.final_model_path)
 - 规则必须是自包含的纯 Python；
 - 规则只能使用 Python 标准库，不能依赖第三方包；
 - 每个 `if` / `elif` / `else` 分支都必须带英文注释，说明医学依据或设计意图；
+- 每个特征值都必须从 `features` 字典读取（`features["col"]` 或 `features.get("col")`），禁止把特征名写成裸变量；
 - 迭代更新强调小步修改，而不是整份函数重写。
 
-代码侧会在接受提案前校验 JSON 结构、Python 语法以及函数名是否符合约定。
+代码侧会在接受提案前校验 JSON 结构、Python 语法、函数名以及未定义变量引用。
 
 ## API 概览
 

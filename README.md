@@ -275,9 +275,10 @@ The current prompt templates in `hl/agent/prompts.py` and `hl/agent/continuous_p
 - generated rules must be self-contained pure Python;
 - generated rules may use only the Python standard library;
 - every `if`/`elif`/`else` branch must include an English comment explaining the medical rationale or design intent;
+- every feature value must be read from the `features` dict (`features["col"]` or `features.get("col")`), never as a bare variable;
 - iterative updates should be minimal rather than full rewrites.
 
-The code validates JSON structure, Python syntax, and required function names before accepting a proposal.
+The code validates JSON structure, Python syntax, required function names, and undefined variable references before accepting a proposal.
 
 ## API Summary
 
