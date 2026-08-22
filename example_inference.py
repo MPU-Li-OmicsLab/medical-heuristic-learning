@@ -1,23 +1,10 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pandas as pd
 
-
-def _load_predict_fn(model_path: Path):
-    spec = importlib.util.spec_from_file_location("final_heuristic_model", model_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to load model module from {model_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    predict_fn = getattr(module, "predict", None)
-    if predict_fn is None:
-        raise RuntimeError(f"`predict(features)` not found in {model_path}")
-    return predict_fn
+from hl import load_model
 
 
 def main() -> None:
@@ -34,7 +21,7 @@ def main() -> None:
     infer_df = data.tail(5).copy()
     feature_cols = [c for c in infer_df.columns if c != label_col]
 
-    predict_fn = _load_predict_fn(model_path)
+    predict_fn = load_model(model_path)
 
     predictions: list[int] = []
     for _, row in infer_df.iterrows():
