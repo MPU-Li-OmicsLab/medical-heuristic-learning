@@ -6,7 +6,13 @@ from pathlib import Path
 from hl.agent.client import ChatMessage, LLMClient
 from hl.agent.prompts import get_rule_generation_prompt
 from hl.config import RunConfig
-from hl.evolution.rule_utils import ParsedProposal, extract_function_name, strip_code_fences, validate_python_syntax
+from hl.evolution.rule_utils import (
+    ParsedProposal,
+    extract_function_name,
+    strip_code_fences,
+    validate_python_syntax,
+    validate_undefined_names,
+)
 from hl.utils.io import append_text, write_text
 from hl.utils.progress import log_progress
 
@@ -56,6 +62,7 @@ def generate_v0_task(
             if p.version != "v0":
                 raise RuntimeError(f"v0 generation failed: version mismatch (expected v0, got {p.version})")
             validate_python_syntax(p.new_policy_code)
+            validate_undefined_names(p.new_policy_code)
             fn_name = extract_function_name(p.new_policy_code)
             if fn_name != "predict_v0":
                 raise RuntimeError(f"v0 generation failed: function name mismatch (expected predict_v0, got {fn_name})")

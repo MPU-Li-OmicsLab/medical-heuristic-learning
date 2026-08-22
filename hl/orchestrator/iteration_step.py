@@ -13,7 +13,13 @@ from hl.agent.prompts import get_iteration_prompt
 from hl.config import RunConfig
 from hl.evolution.degradation import collect_degradation_examples, detect_degradation, format_degradation_warning
 from hl.evolution.error_analysis import collect_errors, format_error_report
-from hl.evolution.rule_utils import ParsedProposal, extract_function_name, strip_code_fences, validate_python_syntax
+from hl.evolution.rule_utils import (
+    ParsedProposal,
+    extract_function_name,
+    strip_code_fences,
+    validate_python_syntax,
+    validate_undefined_names,
+)
 from hl.metrics import compute_metrics
 from hl.utils.io import append_text
 from hl.utils.progress import log_progress
@@ -169,9 +175,14 @@ def run_iterations_task(
             new_code = proposal.new_policy_code.strip()
             try:
                 validate_python_syntax(new_code)
-            except Exception as e:
+                validate_undefined_names(new_code)
+            except SyntaxError as e:
                 attempt_logs.append({"attempt": attempt, "status": "syntax_invalid", "error": str(e)})
                 log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: syntax_invalid ({e}).")
+                continue
+            except Exception as e:
+                attempt_logs.append({"attempt": attempt, "status": "undefined_name", "error": str(e)})
+                log_progress("HL-ITER", f"{next_version} attempt {attempt} failed: undefined_name ({e}).")
                 continue
             
             fn_name = extract_function_name(new_code)
