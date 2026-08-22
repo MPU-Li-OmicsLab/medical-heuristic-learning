@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from hl.result import RunResult
+
 
 @dataclass(frozen=True)
 class DriftConfig:
@@ -34,7 +36,5 @@ class ContinuousLearningConfig:
 
 
 @dataclass(frozen=True)
-class ContinuousLearningResult:
-    out_dir: Path
-    heuristic_path: Path
-    final_model_path: Path
+class ContinuousLearningResult(RunResult):
+    """Drift-aware run result; currently adds no fields to ``RunResult``."""

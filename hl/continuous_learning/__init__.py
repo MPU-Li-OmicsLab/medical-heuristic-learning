@@ -2,3 +2,10 @@ from __future__ import annotations
 
 from hl.continuous_learning.config import ContinuousLearningConfig, ContinuousLearningResult, DriftConfig
 from hl.continuous_learning.main_orchestrator import run_continuous_learning
+
+__all__ = [
+    "ContinuousLearningConfig",
+    "ContinuousLearningResult",
+    "DriftConfig",
+    "run_continuous_learning",
+]

@@ -13,6 +13,7 @@ from hl.orchestrator.iteration_step import IterationRecord, run_iterations_task
 from hl.orchestrator.knowledge_probe_step import run_knowledge_probe_task
 from hl.orchestrator.univariate_probe_step import run_univariate_probe_task
 from hl.orchestrator.v0_generation_step import generate_v0_task
+from hl.result import RunResult
 from hl.utils.io import ensure_dir, write_json, write_text
 from hl.utils.progress import log_progress
 
@@ -24,7 +25,7 @@ def _pick_best_record(records: list[IterationRecord], metric_priority: tuple[str
     return max(records, key=key_fn)
 
 
-def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str) -> None:
+def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str) -> Path:
     code_all = heuristic_path.read_text(encoding="utf-8")
     exported = (
         f"FINAL_VERSION = {json.dumps(final_version)}\n\n"
@@ -36,12 +37,14 @@ def _export_final_model(out_dir: Path, heuristic_path: Path, final_version: str)
         + "        raise RuntimeError('final predictor not found')\n"
         + "    return int(fn(features))\n"
     )
-    write_text(out_dir / "final_heuristic_model.py", exported)
+    final_model_path = out_dir / "final_heuristic_model.py"
+    write_text(final_model_path, exported)
+    return final_model_path
 
 
 def run_heuristic_learning(
     train_df: pd.DataFrame, val_df: pd.DataFrame, label_col: str, run_cfg: RunConfig, llm_cfg: LLMConfig
-) -> None:
+) -> RunResult:
     log_progress("HL", "Starting heuristic learning run.")
     if run_cfg.output_dir is None:
         base = Path.cwd() / "out"
@@ -143,7 +146,7 @@ def run_heuristic_learning(
     last = records[-1]
     v0 = records[0]
 
-    _export_final_model(out_dir, heuristic_path, best.version)
+    final_model_path = _export_final_model(out_dir, heuristic_path, best.version)
     log_progress("HL", f"Exported final model with version={best.version}.")
 
     comparison = (
@@ -154,3 +157,9 @@ def run_heuristic_learning(
     )
     write_text(final_comparison_path, comparison)
     log_progress("HL", "Heuristic learning run finished.")
+
+    return RunResult(
+        out_dir=out_dir,
+        heuristic_path=heuristic_path,
+        final_model_path=final_model_path,
+    )
