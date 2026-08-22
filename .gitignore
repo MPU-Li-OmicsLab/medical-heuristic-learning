@@ -6,6 +6,9 @@ __pycache__/
 .ruff_cache/
 out*/
 uv.lock
+dist/
+.uv-cache/
+*.egg-info/
 temp/
 example_out0/
 example_out_continuous_learning/
