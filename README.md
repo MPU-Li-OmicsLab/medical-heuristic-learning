@@ -75,8 +75,12 @@ Continuous learning additionally writes the drift context and previous probe sna
   Error sampling, degradation detection, rule parsing, and syntax validation helpers.
 - `hl/metrics.py`
   Metric computation and metric-priority prompt description generation.
+- `hl/model.py`
+  Public loader for trusted exported MHL model files.
+- `hl/result.py`
+  Shared `RunResult` artifact-path return type.
 - `hl/utils/`
-  Thin wrappers for file output and terminal progress logging.
+  Thin wrappers for file output and standard-library progress logging.
 - `example_training.py`
   End-to-end training example on `./data/YHD_bicarbonate.csv`, writing to `./example_out`.
 - `example_inference.py`
@@ -189,13 +193,16 @@ llm_cfg = LLMConfig(
     api_key="your-api-key",  # optional; otherwise read from api_key_env
 )
 
-run_heuristic_learning(
+result = run_heuristic_learning(
     train_df=train_df,
     val_df=val_df,
     label_col="hospital_expire_flag",
     run_cfg=run_cfg,
     llm_cfg=llm_cfg,
 )
+
+print(result.out_dir)
+print(result.final_model_path)
 ```
 
 ### Continuous Learning Workflow
@@ -257,14 +264,20 @@ Continuous learning additionally writes:
 
 ## Runtime Behavior
 
-The main `hl/` pipeline prints stage progress to stdout. Typical messages include:
+The main `hl/` pipeline emits INFO-level stage progress through the standard `hl` logger. Typical messages include:
 
 - run start and finish;
 - resolved output directory;
 - stage boundaries for univariate probe, knowledge probe, v0 generation, and iterations;
 - retry failures, accepted versions, and detected regression examples.
 
-This is implemented by `hl/utils/progress.py` and is enabled by default.
+This is implemented by `hl/utils/progress.py`. The library does not configure logging handlers; applications can enable progress logs explicitly:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+```
 
 ## Prompt And Rule Constraints
 
@@ -358,7 +371,7 @@ def run_heuristic_learning(
     label_col: str,
     run_cfg: RunConfig,
     llm_cfg: LLMConfig,
-) -> None:
+) -> RunResult:
 ```
 
 Behavior summary:
@@ -368,6 +381,31 @@ Behavior summary:
 - runs univariate probe, knowledge probe, v0 generation, and iterations;
 - writes iteration logs and artifact files;
 - exports `final_heuristic_model.py` using the best recorded version under `metric_priority`.
+
+### `RunResult`
+
+Common return object for standard and continuous MHL runs.
+
+```python
+from hl.result import RunResult
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `out_dir` | `Path` | Output directory for the run. |
+| `heuristic_path` | `Path` | Path to the versioned `heuristic_system.py`. |
+| `final_model_path` | `Path` | Path to the exported final model. |
+
+### `load_model`
+
+`load_model(...)` loads the callable `predict(features)` entrypoint from a trusted exported MHL model file.
+
+```python
+from hl import load_model
+
+predict = load_model(result.final_model_path)
+prediction = predict({"feature_name": 1.0})
+```
 
 ### `DriftConfig`
 
@@ -406,7 +444,7 @@ Configuration for drift-aware continuous learning.
 
 ### `ContinuousLearningResult`
 
-Return object from `run_continuous_learning(...)`.
+Specialized `RunResult` subclass returned by `run_continuous_learning(...)`.
 
 | Field | Type | Description |
 | --- | --- | --- |

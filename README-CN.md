@@ -75,8 +75,12 @@ Medical Heuristic Learning（MHL）是一个面向临床表格预测的轻量级
   错误样本采样、退化检测、规则解析与语法校验工具。
 - `hl/metrics.py`
   指标计算与指标优先级描述生成。
+- `hl/model.py`
+  用于加载可信 MHL 导出模型文件的公共入口。
+- `hl/result.py`
+  标准流程与持续学习流程共用的 `RunResult` 产物路径返回类型。
 - `hl/utils/`
-  文本/JSON 写入与终端进度打印工具。
+  文本/JSON 写入与标准库进度日志工具。
 - `example_training.py`
   基于 `./data/YHD_bicarbonate.csv` 的端到端训练示例，输出到 `./example_out`。
 - `example_inference.py`
@@ -186,13 +190,16 @@ llm_cfg = LLMConfig(
     api_key="your-api-key",  # 可选；不传时从 api_key_env 读取
 )
 
-run_heuristic_learning(
+result = run_heuristic_learning(
     train_df=train_df,
     val_df=val_df,
     label_col="hospital_expire_flag",
     run_cfg=run_cfg,
     llm_cfg=llm_cfg,
 )
+
+print(result.out_dir)
+print(result.final_model_path)
 ```
 
 ### 持续学习流程
@@ -254,14 +261,20 @@ print(result.final_model_path)
 
 ## 运行时行为
 
-`hl/` 主干在运行时会向标准输出打印阶段进度，典型信息包括：
+`hl/` 主干通过标准 `hl` logger 记录 INFO 级阶段进度，典型信息包括：
 
 - 整体运行开始与结束；
 - 输出目录解析结果；
 - 单变量探针、知识探针、`v0` 生成、迭代优化的阶段边界；
 - LLM 重试失败原因、被接受的新版本以及检测到的回归样本。
 
-这些输出由 `hl/utils/progress.py` 实现，默认启用。
+日志由 `hl/utils/progress.py` 实现。库本身不配置 logging handler；应用可以显式启用进度日志：
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+```
 
 ## Prompt 与规则约束
 
@@ -355,7 +368,7 @@ def run_heuristic_learning(
     label_col: str,
     run_cfg: RunConfig,
     llm_cfg: LLMConfig,
-) -> None:
+) -> RunResult:
 ```
 
 行为概述：
@@ -365,6 +378,31 @@ def run_heuristic_learning(
 - 顺序执行单变量探针、知识探针、`v0` 生成与迭代优化；
 - 写出各类中间文件与日志；
 - 按 `metric_priority` 选择最佳版本并导出 `final_heuristic_model.py`。
+
+### `RunResult`
+
+标准流程与持续学习流程共用的返回对象。
+
+```python
+from hl.result import RunResult
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `out_dir` | `Path` | 本次运行的输出目录。 |
+| `heuristic_path` | `Path` | 版本化 `heuristic_system.py` 的路径。 |
+| `final_model_path` | `Path` | 导出的最终模型路径。 |
+
+### `load_model`
+
+`load_model(...)` 从可信的 MHL 导出模型文件中加载可调用的 `predict(features)` 入口。
+
+```python
+from hl import load_model
+
+predict = load_model(result.final_model_path)
+prediction = predict({"feature_name": 1.0})
+```
 
 ### `DriftConfig`
 
@@ -403,7 +441,7 @@ def run_heuristic_learning(
 
 ### `ContinuousLearningResult`
 
-`run_continuous_learning(...)` 的返回对象。
+`run_continuous_learning(...)` 返回的 `RunResult` 专用子类。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
