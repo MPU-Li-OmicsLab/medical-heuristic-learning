@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,12 @@ from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_co
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     data_path = Path("./data/YHD_bicarbonate.csv")
     prev_out_dir = Path("./example_out")
     output_dir = Path("./example_out_continuous_learning")

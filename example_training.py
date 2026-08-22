@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,12 @@ from hl.orchestrator import run_heuristic_learning
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     data = pd.read_csv("./data/YHD_bicarbonate.csv")
     label_col = "hospital_expire_flag"
 
@@ -43,7 +50,15 @@ def main() -> None:
         # thinking_mode=False,  # explicitly disable thinking
         # thinking_strength="high",  # low / medium / high / xhigh / max
     )
-    run_heuristic_learning(train_df=train_df, val_df=val_df, label_col=label_col, run_cfg=run_cfg, llm_cfg=llm_cfg)
+    result = run_heuristic_learning(
+        train_df=train_df,
+        val_df=val_df,
+        label_col=label_col,
+        run_cfg=run_cfg,
+        llm_cfg=llm_cfg,
+    )
+    print(f"heuristic_learning_out_dir={result.out_dir}")
+    print(f"heuristic_learning_final_model={result.final_model_path}")
 
 
 if __name__ == "__main__":

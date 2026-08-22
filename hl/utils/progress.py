@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+
+
+_LOGGER = logging.getLogger("hl")
 
 
 def log_progress(component: str, message: str) -> None:
-    stamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[{stamp}] [{component}] {message}", flush=True)
+    _LOGGER.info("[%s] %s", component, message)
