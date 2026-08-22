@@ -1,19 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "hl-medical"
+name = "medical-heuristic-learning"
 version = "1.2.0"
 description = "Medical Heuristic Learning"
-requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+keywords = ["medical", "tabular", "heuristic", "rule-learning", "llm", "clinical"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
-    "numpy>=2.4.5",
+    "numpy>=1.26",
     "openai>=2.37.0",
     "pandas>=2.0.3,<3.0.0",
-    "scipy>=1.17.1",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
     "socksio>=1.0.0",
 ]
 
+[project.urls]
+repository = "https://github.com/MPU-Li-OmicsLab/medical-heuristic-learning"
+
+
 [dependency-groups]
 dev = [
-    "scikit-learn>=1.8.0",
     "lightgbm>=4.6.0",
     "torch>=2.3.0",
     "xgboost>=2.1.0",
@@ -25,12 +47,32 @@ dev = [
     "setuptools>=78.1.1,<80",
     "wheel>=0.46.0",
 ]
+test = [
+    "pytest>=8.0",
+]
 
 [tool.uv]
-package = false
+package = true
 no-build-isolation-package = ["corels"]
 
 [[tool.uv.dependency-metadata]]
 name = "corels"
 version = "1.1.29"
 requires-dist = ["numpy"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hl"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "data/",
+    "experiment/outputs_rerun/",
+    "example_out*",
+    "model_checkpoints/",
+    ".venv/",
+    ".uv-cache/",
+    ".pytest_cache/",
+    "dist/",
+    "**/__pycache__/",
+    "*.pyc",
+]
