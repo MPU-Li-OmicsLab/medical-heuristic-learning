@@ -478,8 +478,9 @@ The `experiment/` directory is separate from the reusable `hl/` core. Current su
   `stage2_direct_train40`, with seeds 36/40/42. HL is compared against six
   baselines (MLP, XGBoost, LightGBM, EBM, DeepTab FT-Transformer, DeepTab ResNet)
   with per-model Stage 1 -> Stage 2 transfer strategies under SIRS -> SOFA feature
-  drift. The earlier gated A->B hyperparameter-search runner was removed; its audit
-  is archived under `experiment/outputs_rerun/`.
+  drift. The HL runner can execute Stage 1, Stage 1 -> 2 adaptation, and direct
+  Stage 2 independently. The earlier gated A->B hyperparameter-search runner was
+  removed; its audit is archived under `experiment/outputs_rerun/`.
 - `experiment/outputs_rerun/`
   model artifacts, predictions, metrics, and run manifests for the rerun
   experiments.

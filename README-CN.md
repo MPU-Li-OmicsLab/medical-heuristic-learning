@@ -472,7 +472,8 @@ def run_continuous_learning(
   `stage2_continual_from_stage1_train40`、`stage2_direct_train40`，种子
   36/40/42。在 SIRS → SOFA 特征漂移下比较 HL 与六个 baseline（MLP、XGBoost、
   LightGBM、EBM、DeepTab FT-Transformer、DeepTab ResNet），各模型使用专属的
-  Stage 1 → Stage 2 迁移策略。早期的门控 A→B 超参搜索运行器已移除，其审计记录
+  Stage 1 → Stage 2 迁移策略。HL runner 可分别运行 Stage 1、Stage 1 → Stage 2
+  持续适配和 Stage 2 直接训练。早期的门控 A→B 超参搜索运行器已移除，其审计记录
   归档在 `experiment/outputs_rerun/`。
 - `experiment/outputs_rerun/`
   重跑实验的模型产物、预测、指标与运行 manifest 归档。

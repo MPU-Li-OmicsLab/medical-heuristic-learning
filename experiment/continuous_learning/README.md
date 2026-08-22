@@ -39,7 +39,7 @@ each run manifest.
 | `continuous_learning_experiment_common.py` | Shared data flow: frozen two-stage partition, result CSV schema, stage/dataset dataclasses |
 | `continuous_baseline_v2.py` | Per-model transfer implementations for the six baselines |
 | `run_continuous_learning_baselines_v2.py` | Baseline runner (6 models x 3 seeds x 3 endpoints) |
-| `run_continuous_learning_hl_v2.py` | HL Stage 2 direct-training runner; guards the previously completed HL rows |
+| `run_continuous_learning_hl_v2.py` | HL runner for independently selected Stage 1, Stage 1 -> 2 continual adaptation, and direct Stage 2 endpoints |
 | `verify_continuous_baselines_v2.py` | Artifact verification: row keys, frozen test rows, metric recomputation, transfer consistency |
 
 The earlier gated A->B hyperparameter-search runner was removed from this
@@ -57,13 +57,46 @@ CUDA_VISIBLE_DEVICES=1 uv run python \
   --models all --seeds 36 40 42 --resume
 ```
 
-Run or resume direct Stage 2 HL:
+Run or resume all three HL endpoints:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 uv run python \
   experiment/continuous_learning/run_continuous_learning_hl_v2.py \
   --seeds 36 40 42 --resume
 ```
+
+`--resume` checks each selected endpoint independently. For example, if the
+Stage 1 and Stage 1 -> 2 HL rows/artifacts are missing but direct Stage 2 is
+complete, the command above runs the first two endpoints and leaves direct
+Stage 2 untouched.
+
+Run endpoints separately:
+
+```bash
+# Stage 1 from scratch
+CUDA_VISIBLE_DEVICES=1 uv run python \
+  experiment/continuous_learning/run_continuous_learning_hl_v2.py \
+  --stages stage1 --seeds 36 40 42
+
+# Stage 1 -> 2 continual adaptation; requires a complete Stage 1 result and artifacts
+CUDA_VISIBLE_DEVICES=1 uv run python \
+  experiment/continuous_learning/run_continuous_learning_hl_v2.py \
+  --stages stage1-to-stage2 --seeds 36 40 42
+
+# Direct Stage 2 from scratch, without Stage 1 access
+CUDA_VISIBLE_DEVICES=1 uv run python \
+  experiment/continuous_learning/run_continuous_learning_hl_v2.py \
+  --stages stage2 --seeds 36 40 42
+```
+
+Multiple stages can be selected with, for example,
+`--stages stage1 stage1-to-stage2`. `--stages all` is the default. A standalone
+Stage 1 -> 2 invocation validates the successful Stage 1 CSV row, final model,
+metrics, predictions, manifest, and probe artifacts before making an LLM call.
+New executions write to a unique timestamp leaf below the selected HL endpoint,
+so earlier model artifacts are not overwritten. The combined results CSV keeps
+all baseline and unselected endpoint rows; only the selected `(seed, HL, stage)`
+row is updated after a successful rerun (or recorded error).
 
 The HL command sends derived medical-data context to the configured external
 DeepSeek API and therefore requires explicit authorization and
@@ -81,9 +114,6 @@ uv run python experiment/continuous_learning/verify_continuous_baselines_v2.py
 - Models and endpoint artifacts:
   `experiment/outputs_rerun/continuous_learning_v2/`
 
-The combined CSV has 63 rows: seven models, three seeds, and three endpoints.
-The six Stage 1/continual HL rows were migrated from the previously completed
-HL experiment and aligned to the V2 endpoint/status names. Their original
-artifact paths belong to the former workspace and are retained only as
-provenance; the three new direct Stage 2 HL artifacts use the current V2
-layout and are fully verified.
+The complete combined CSV has 63 rows: seven models, three seeds, and three
+endpoints. All three HL endpoints now write the current V2 prediction, metrics,
+and manifest contracts and can be verified together with the baselines.
