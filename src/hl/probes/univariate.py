@@ -125,14 +125,26 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
             mwu_p: float | None = None
             mwu_u: float | None = None
 
-            if not df.empty:
+            if not df.empty and df["x"].nunique(dropna=True) == 1:
+                # A constant feature cannot discriminate between classes. Treat it
+                # as explicitly uninformative instead of relying on SciPy version-
+                # dependent behavior for degenerate statistics.
+                method = "constant"
+                stat = 0.0
+                p = 1.0
+            elif not df.empty:
                 try:
                     r, p_r = pointbiserialr(df["y"].to_numpy(), df["x"].to_numpy())
-                    r_val = float(r)
-                    p_r_val = float(p_r)
-                    stat = float(r)
-                    p = float(p_r)
-                    direction = "pos" if r_val >= 0 else "neg"
+                    r_float = float(r)
+                    p_r_float = float(p_r)
+                    if np.isfinite(r_float):
+                        r_val = r_float
+                        direction = "pos" if r_float >= 0 else "neg"
+                    if np.isfinite(p_r_float):
+                        p_r_val = p_r_float
+                    if r_val is not None and p_r_val is not None:
+                        stat = r_val
+                        p = p_r_val
                 except Exception:
                     pass
 
@@ -141,12 +153,18 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
                     x0 = df.loc[df["y"] == 0, "x"].to_numpy()
                     if len(x1) > 0 and len(x0) > 0:
                         u, p_u = mannwhitneyu(x1, x0, alternative="two-sided")
-                        mwu_u = float(u)
-                        mwu_p = float(p_u)
-                        if np.isnan(p) or mwu_p < p:
+                        u_float = float(u)
+                        p_u_float = float(p_u)
+                        if np.isfinite(u_float):
+                            mwu_u = u_float
+                        if np.isfinite(p_u_float):
+                            mwu_p = p_u_float
+                        if mwu_u is not None and mwu_p is not None and (
+                            not np.isfinite(p) or mwu_p < p
+                        ):
                             method = "mwu"
                             p = mwu_p
-                            stat = mwu_u if mwu_u is not None else float("nan")
+                            stat = mwu_u
                 except Exception:
                     pass
 
@@ -184,20 +202,22 @@ def run_univariate_probe(train_df: pd.DataFrame, label_col: str) -> pd.DataFrame
         chi2_p: float | None = None
         n_unique, level_counts = _level_counts_json(s)
 
-        if not df.empty:
+        if not df.empty and df["x"].nunique(dropna=True) == 1:
+            method = "constant"
+            stat = 0.0
+            p = 1.0
+        elif not df.empty:
             try:
                 ctab = pd.crosstab(df["x"], df["y"])
                 if ctab.shape[0] >= 2 and ctab.shape[1] == 2:
                     chi2, p_chi2, _, _ = chi2_contingency(ctab)
-                    stat = float(chi2)
-                    p = float(p_chi2)
-                    chi2_stat = stat
-                    chi2_p = p
-                elif ctab.shape[0] == 1 and ctab.shape[1] == 2:
-                    stat = 0.0
-                    p = 1.0
-                    chi2_stat = stat
-                    chi2_p = p
+                    chi2_float = float(chi2)
+                    p_chi2_float = float(p_chi2)
+                    if np.isfinite(chi2_float) and np.isfinite(p_chi2_float):
+                        stat = chi2_float
+                        p = p_chi2_float
+                        chi2_stat = chi2_float
+                        chi2_p = p_chi2_float
             except Exception:
                 pass
 

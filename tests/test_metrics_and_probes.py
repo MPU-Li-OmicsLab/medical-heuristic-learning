@@ -134,7 +134,7 @@ def test_univariate_probe_handles_continuous_binary_categorical_and_missing_feat
     frame.loc[[2, 19], "continuous"] = np.nan
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ConstantInputWarning)
+        warnings.simplefilter("error", ConstantInputWarning)
         result = run_univariate_probe(frame, "target")
     rows = result.set_index("feature")
 
@@ -149,7 +149,14 @@ def test_univariate_probe_handles_continuous_binary_categorical_and_missing_feat
     assert rows.loc["continuous", "max"] == 3.0
     assert rows.loc["binary", "feature_type"] == "binary"
     assert rows.loc["category", "feature_type"] == "categorical"
+    assert rows.loc["constant", "method"] == "constant"
+    assert rows.loc["constant", "statistic"] == 0.0
     assert rows.loc["constant", "p_value"] == 1.0
+    assert rows.loc["constant", "direction"] == ""
+    assert pd.isna(rows.loc["constant", "pointbiserial_r"])
+    assert pd.isna(rows.loc["constant", "pointbiserial_p"])
+    assert pd.isna(rows.loc["constant", "mwu_u"])
+    assert pd.isna(rows.loc["constant", "mwu_p"])
     assert rows.loc["all_missing", "n_valid"] == 0
 
     sort_keys = [
@@ -161,6 +168,68 @@ def test_univariate_probe_handles_continuous_binary_categorical_and_missing_feat
     level_counts = json.loads(rows.loc["many_levels", "level_counts"])
     assert len(level_counts) == 21
     assert level_counts["__OTHER__"] == 4
+
+
+@pytest.mark.parametrize(
+    ("values", "expected_type", "expected_n_valid"),
+    [
+        ([5.0, 5.0, np.nan, 5.0, 5.0, 5.0, 5.0, 5.0], "continuous", 7),
+        ([0, 0, 0, 0, 0, 0, 0, 0], "binary", 8),
+        ([1, 1, 1, 1, 1, 1, 1, 1], "binary", 8),
+        (["same"] * 8, "categorical", 8),
+    ],
+)
+def test_univariate_probe_treats_constant_features_as_uninformative(
+    values: list[object],
+    expected_type: str,
+    expected_n_valid: int,
+) -> None:
+    frame = pd.DataFrame({"feature": values, "target": [0, 1] * 4})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConstantInputWarning)
+        row = run_univariate_probe(frame, "target").iloc[0]
+
+    assert row["feature_type"] == expected_type
+    assert row["n_valid"] == expected_n_valid
+    assert row["method"] == "constant"
+    assert row["statistic"] == 0.0
+    assert row["p_value"] == 1.0
+    assert row["direction"] == ""
+
+
+def test_univariate_probe_does_not_treat_nearly_constant_feature_as_constant() -> None:
+    frame = pd.DataFrame(
+        {
+            "feature": [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 6.0],
+            "target": [0, 1] * 4,
+        }
+    )
+
+    row = run_univariate_probe(frame, "target").iloc[0]
+
+    assert row["method"] != "constant"
+    assert np.isfinite(row["statistic"])
+    assert np.isfinite(row["p_value"])
+
+
+def test_univariate_probe_does_not_assign_direction_from_non_finite_correlation() -> None:
+    frame = pd.DataFrame(
+        {
+            "feature": [-2.0, -1.0, 1.0, 2.0],
+            "target": [0, 0, 0, 0],
+        }
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConstantInputWarning)
+        row = run_univariate_probe(frame, "target").iloc[0]
+
+    assert pd.isna(row["statistic"])
+    assert pd.isna(row["p_value"])
+    assert row["direction"] == ""
+    assert pd.isna(row["pointbiserial_r"])
+    assert pd.isna(row["pointbiserial_p"])
 
 
 def test_univariate_probe_never_includes_the_label_as_a_feature() -> None:
