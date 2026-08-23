@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from hl import load_model
+from hl import load_batch_model, load_model
 
 
 def main() -> None:
@@ -18,15 +18,23 @@ def main() -> None:
         )
 
     data = pd.read_csv(data_path)
+
+    # Prepare feature-only data before calling either prediction interface.
+    feature_data = data.drop(columns=[label_col])
+
+    # Load the original final predictor for one-row inference.
+    predict_one = load_model(model_path)
+    single_features = feature_data.iloc[-1].to_dict()
+    single_prediction = int(predict_one(single_features))
+
+    print("Inference on one row from ./data/YHD_bicarbonate.csv")
+    print(f"prediction={single_prediction}")
+
+    # Pass a feature-only DataFrame to the assembled batch predictor.
+    predict_batch = load_batch_model(model_path)
     infer_df = data.tail(5).copy()
-    feature_cols = [c for c in infer_df.columns if c != label_col]
-
-    predict_fn = load_model(model_path)
-
-    predictions: list[int] = []
-    for _, row in infer_df.iterrows():
-        features = {col: row[col] for col in feature_cols}
-        predictions.append(int(predict_fn(features)))
+    infer_features = feature_data.tail(5)
+    predictions = predict_batch(infer_features)
 
     result_df = infer_df[[label_col]].copy()
     result_df.insert(0, "row_index", infer_df.index)
