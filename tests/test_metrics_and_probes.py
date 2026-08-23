@@ -112,6 +112,12 @@ def test_metric_description_handles_any_supported_priority_length(priorities: tu
         assert metric in description
 
 
+def test_metric_description_ignores_blank_priorities_without_changing_order() -> None:
+    description = generate_metric_description(("F1", " ", "ACC", "Sensitivity"))
+
+    assert "F1, ACC, Sensitivity" in description
+
+
 def test_univariate_probe_handles_continuous_binary_categorical_and_missing_features() -> None:
     size = 24
     frame = pd.DataFrame(
