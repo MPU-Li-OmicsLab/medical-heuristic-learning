@@ -1,276 +1,306 @@
-# contrast2：训练集正负比对比实验
+# Contrast2：类别不平衡对比实验
 
-## 统一重跑（当前正式入口）
+本实验在固定训练总量下系统改变正负样本比例，用于评估医学表格二分类模型和 Heuristic Learning（HL）白盒规则对类别不平衡的敏感性。当前代码提供基线入口、HL 入口和 HL 混淆矩阵补全工具。
 
-`run_contrast2.py` 现统一重跑 LogisticRegression、DecisionTree、MLP、XGBoost、
-LightGBM、DeepTab FT-Transformer、DeepTab ResNet、EBM、APLR 和官方 CORELS；
-HL 继续复用旧结果。类别比例只在训练数据采样阶段设置，模型层自动平衡全部关闭。
+所有命令都应在仓库根目录执行。
 
-正式种子为 `36 40 42`，训练总量为 `1000/3000`，九种正负比保持不变。更新后的
-YHD 与 UKB 对齐：无重复验证集和测试集均各为 1000 条，并按 `1:1` 生成。
-只重跑 YHD baseline、保留已有 UKB 结果的命令：
+## 当前文件与入口
+
+| 文件 | 作用 | 是否直接运行 |
+| --- | --- | --- |
+| `experiment/contrast2/run_contrast2.py` | 运行 10 个机器学习/深度学习基线 | 是 |
+| `experiment/contrast2/run_contrast2_hl.py` | 运行完整 HL 类别比例矩阵 | 是 |
+| `experiment/contrast2/fill_contrast2_hl_confusion.py` | 根据 HL 最终规则和冻结测试划分补写 TP/FP/FN/TN | 是 |
+| `experiment/contrast2/README.md` | 本实验说明 | 否 |
+
+## 运行前准备
+
+### Python 与依赖
+
+项目要求 Python 3.11 及以上，仓库的 `.python-version` 当前指定 3.11。运行 10 个基线需要完整开发依赖：
+
+```bash
+uv sync
+```
+
+只运行 HL 入口时可使用 `uv sync --no-dev`。项目不维护锁文件，因此不使用 `--locked` 或 `--frozen`。
+
+CORELS 1.1.29 从源码构建需要 C++ 工具链。若 Python 3.11、NumPy 2 环境下生成的扩展代码无法编译，应使用开发依赖中的 Cython 3 从官方 `corels/_corels.pyx` 重新生成 C++ 文件后构建官方源码包。
+
+### 数据文件
+
+| 数据集 | CSV 路径 | 标签列 |
+| --- | --- | --- |
+| UKB | `data/UKB.csv` | `label` |
+| YHD | `data/YHD_bicarbonate.csv` | `hospital_expire_flag` |
+
+标签必须能转换为 `0/1`。测试集与验证集均要求每类至少 500 条，扣除两者后训练池还必须保留正、负样本。
+
+### HL 密钥
+
+```bash
+export DEEPSEEK_API_KEY="你的密钥"
+```
+
+当前 HL 入口固定使用：
+
+| 配置 | 值 |
+| --- | --- |
+| API 地址 | `https://api.deepseek.com/v1` |
+| 密钥变量 | `DEEPSEEK_API_KEY` |
+| 模型 | `deepseek-v4-pro` |
+| 温度 | `0.0` |
+
+## 实验设计
+
+### 数据划分与比例矩阵
+
+每个数据集和种子先构造互不重叠的固定保留集：
+
+- 验证集：1,000 条，正负各 500 条。
+- 测试集：1,000 条，正负各 500 条。
+- 训练池：扣除验证集和测试集后的所有行。
+
+随后分别生成两种训练总量：
+
+```text
+1000, 3000
+```
+
+每种总量覆盖九个“正类:负类”比例：
+
+```text
+1:1, 1:2, 2:1, 1:5, 5:1, 1:10, 10:1, 1:50, 50:1
+```
+
+目标正类数按比例四舍五入并限制为至少 1 条，负类数为总量减去正类数。例如总量 1,000、比例 `1:50` 时约为 20 个正例和 980 个负例。某一类别的训练池数量不足时，该类别使用有放回抽样。验证集和测试集始终保持 1:1，不随训练比例改变。
+
+### 基线模型与公平性约束
+
+当前模型集合：
+
+1. `LogisticRegression`
+2. `DecisionTree`
+3. `MLP`
+4. `XGBoost`
+5. `LightGBM`
+6. `FT-Transformer`
+7. `ResNet`
+8. `EBM`
+9. `APLR`
+10. `CORELS`
+
+固定模型参数与预处理来自 `experiment/modeling/`。本实验不启用任何自动类别修正：不使用 `class_weight`、`sample_weight`、加权采样、`scale_pos_weight` 或框架自带类别平衡。这样，模型看到的不平衡仅由显式训练比例决定。
+
+基线以正类概率 `>= 0.5` 判定为 1，在平衡测试集上报告 Accuracy、F1、Sensitivity、Specificity 以及 TP、FP、FN、TN。
+
+默认完整基线矩阵共有：
+
+```text
+10 个模型 × 2 个数据集 × 2 个训练总量
+× 9 个比例 × 3 个种子 = 1080 个任务
+```
+
+### HL 配置
+
+HL 对每个“数据集 × 训练总量 × 比例”执行完整 `U1_K1` 流程：单变量探测、知识探测、`v0` 生成和规则迭代全部启用。一次命令只处理一个种子，共：
+
+```text
+2 个数据集 × 2 个训练总量 × 9 个比例 = 36 个任务
+```
+
+最终 `final_heuristic_model.py` 在同一冻结测试集上评估。
+
+## 基线入口运行方式
+
+### 完整运行
+
+```bash
+uv run python experiment/contrast2/run_contrast2.py
+```
+
+1080 个任务耗时较长，建议先进行最小检查。
+
+### 最小可运行检查
 
 ```bash
 uv run python experiment/contrast2/run_contrast2.py \
-  --models all --seeds 36 40 42 --datasets YHD \
-  --resume --rerun-existing
+  --models LogisticRegression \
+  --datasets UKB \
+  --train-totals 1000 \
+  --ratios 1:1 \
+  --seeds 42
 ```
 
-逐 seed 结果写入 `contrast2_rerun_seed<seed>.csv`，模型产物位于
-`experiment/outputs_rerun/contrast2/`。以下旧说明若与本节冲突，以本节及扩展方案为准。
+比例参数必须使用脚本定义的精确字符串；包含冒号的值可直接传给 shell。
 
-本目录用于研究训练集类别分布变化对模型表现的影响。和 `contrast1` 不同，`contrast2` 固定验证集与测试集为平衡划分，系统性改变训练集正负样本比例，并比较：
-
-- 常规监督学习基线模型
-- 启发式学习系统 `HL`
-
-当前目录下包含 3 个脚本：
-
-- `run_contrast2.py`：运行常规模型对比，输出 `contrast2.csv`
-- `run_contrast2_hl.py`：运行启发式学习系统对比，输出 `contrast2_hl.csv`
-- `fill_contrast2_hl_confusion.py`：为已有的 HL 结果 CSV 回填 `TP/FP/FN/TN`
-
-## 实验设置
-
-### 数据集
-
-- `UKB`：`./data/UKB.csv`，标签列 `label`
-- `YHD`：`./data/YHD_bicarbonate.csv`，标签列 `hospital_expire_flag`
-
-要求：
-
-- 标签必须是二分类 `0/1`
-- 正负样本数必须足够支撑平衡的验证集与测试集抽样
-
-### 随机种子与切分
-
-- 默认 `seed=42`
-- `val`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
-- `test`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
-- `train_pool`：去掉 `val/test` 后剩余的样本
-
-UKB 与 YHD 使用同一个分层随机切分实现和同一组 seed；验证集、测试集都无放回且源行不重叠。
-
-### 训练集设置
-
-- 训练集总数：`1000`、`3000`
-- 训练集正负比（正:负）：
-  - `1:1`
-  - `1:2`
-  - `2:1`
-  - `1:5`
-  - `5:1`
-  - `1:10`
-  - `10:1`
-  - `1:50`
-  - `50:1`
-
-对每个 `(数据集, 训练集总数, 正负比)` 组合，都会根据目标比例计算正负样本目标数，再从 `train_pool` 中采样：
-
-- 若样本足够，则无放回采样
-- 若某一类样本不足，则该类自动改为有放回采样，以满足目标数量
-
-## 常规模型对比
-
-`run_contrast2.py` 会比较以下模型：
-
-- `LogisticRegression`
-- `DecisionTree`
-- `MLP`
-- `XGBoost`
-- `LightGBM`
-- `FT-Transformer`
-
-说明：
-
-- `XGBoost` 依赖 `xgboost`
-- `LightGBM` 依赖 `lightgbm`
-- `FT-Transformer` 依赖 `torch`
-- 如果依赖缺失，脚本不会报错退出，而是在结果表中写入 `status=missing_dependency`
-
-### 预处理方式
-
-在传统模型中，特征预处理由脚本自动完成：
-
-- 数值列：中位数填补 + 标准化
-- 类别列：众数填补 + One-Hot 编码
-
-`FT-Transformer` 使用脚本内置的单独特征处理逻辑：
-
-- 数值列：转为数值并用训练集统计量填补
-- 类别列：在训练集上建立类别到整数的映射，未知值映射到 `__UNK__`
-- 验证集用于 early stopping 和 best checkpoint 选择
-
-### 运行方式
-
-从仓库根目录运行：
+### 运行筛选后的矩阵
 
 ```bash
-uv run python experiment/contrast2/run_contrast2.py --seed 42 --workers 8
+uv run python experiment/contrast2/run_contrast2.py \
+  --models LogisticRegression,LightGBM,EBM \
+  --datasets UKB YHD \
+  --train-totals 1000 3000 \
+  --ratios 1:1 1:10 10:1 \
+  --seeds 36 40 42
 ```
 
-参数：
-
-- `--seed` / `--seeds`：控制 `val/test` 划分、训练集采样和模型随机种子
-- `--datasets`：选择要运行的数据集；本轮只更新 YHD 时传 `--datasets YHD`
-- `--workers`：CPU 任务的并行进程数
-- `--resume`：读取现有逐 seed CSV，从而保留未选择的 UKB 行
-- `--retry-errors`：只重试已有失败行
-- `--rerun-existing`：重新运行已存在的所选任务；更新 YHD 数据后必须与 `--resume` 一起使用，
-  否则旧的 YHD `status=ok` 行会被跳过
-
-说明：
-
-- 并行执行的是按 `(数据集, 训练集总数, 正负比)` 划分的 CPU 模型任务块
-- `FT-Transformer` 不走该并行块，而是在后续串行训练，避免资源竞争更严重
-
-### 输出文件
-
-运行后会在 `experiment/contrast2/` 下生成：
-
-- `contrast2.csv`
-- `checkpoints/`（仅当 `FT-Transformer` 成功训练时产生）
-
-`contrast2.csv` 的列为：
-
-- `模型`
-- `数据集`
-- `训练集数据量`
-- `训练集正负比`
-- `ACC`
-- `F1`
-- `Sensitivity`
-- `Specificity`
-- `TP`
-- `FP`
-- `FN`
-- `TN`
-- `status`
-- `error`
-
-排序顺序为：
-
-- `模型`
-- `数据集`
-- `训练集数据量`（`1000 -> 3000`）
-- `训练集正负比`（按上面比例列表顺序）
-
-`FT-Transformer` checkpoint 路径示例：
-
-`experiment/contrast2/checkpoints/YHD/train3000/ratio1_10/seed42_best.pth`
-
-## 启发式学习对比（HL）
-
-`run_contrast2_hl.py` 使用项目主流程 `run_heuristic_learning(...)` 运行启发式学习系统，并在本阶段固定使用：
-
-- `run_univariate_probe=True`
-- `run_knowledge_probe=True`
-- `run_v0_generation=True`
-- `run_iterations=True`
-
-也就是说，这里比较的是完整的 `U1_K1` 启发式学习流程，而不是 probe 消融。<mccoremem id="project_memory" />
-
-### 运行方式
-
-运行前需要配置大模型 API Key，例如：
+### 续跑、错误重试和强制重跑
 
 ```bash
-export DEEPSEEK_API_KEY="你的 key"
-uv run python experiment/contrast2/run_contrast2_hl.py --seed 42 --workers 1
+uv run python experiment/contrast2/run_contrast2.py --resume
+uv run python experiment/contrast2/run_contrast2.py --resume --retry-errors
+uv run python experiment/contrast2/run_contrast2.py --rerun-existing
 ```
 
-参数：
+单独使用 `--resume` 会跳过汇总表中所有已有项，包括错误项；与 `--retry-errors` 同时使用会保留成功项并重跑错误项。`--rerun-existing` 会强制重跑当前筛选范围内已有任务。
 
-- `--seed`：控制 `val/test` 划分与训练集采样
-- `--workers`：HL 实验并发进程数
-- `--output-root`：单次 HL 实验目录的输出根目录，默认位于 `./experiment/contrast2/outputs_hl`
+### 基线命令行参数
 
-注意：
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--models` | `all` | 全部模型，或逗号分隔的精确模型名 |
+| `--seeds` | `36 40 42` | 一个或多个种子 |
+| `--seed` | 无 | 单种子快捷覆盖；设置后覆盖 `--seeds` |
+| `--train-totals` | `1000 3000` | 一个或两个训练总量 |
+| `--ratios` | 全部九个比例 | 一个或多个精确比例字符串 |
+| `--datasets` | `UKB YHD` | 一个或两个数据集 |
+| `--workers` | `1` | 当前接受该参数，但模型任务仍顺序执行 |
+| `--resume` | 关闭 | 跳过已有结果 |
+| `--retry-errors` | 关闭 | 与 `--resume` 配合重跑错误项 |
+| `--rerun-existing` | 关闭 | 强制重跑已有项 |
 
-- `workers` 增大后会并发调用 LLM 接口，可能触发限流或显著增加成本
-- 建议先从 `1` 开始，再逐步提高
+## HL 入口运行方式
 
-### HL 输出
-
-脚本会产出两类结果：
-
-- 汇总表：`experiment/contrast2/contrast2_hl.csv`
-- 每个实验的独立输出目录：`<output-root>/<DATASET>/train<TRAIN_TOTAL>/ratio<POS_NEG>/<TIMESTAMP>/`
-
-例如：
-
-- `experiment/contrast2/outputs_hl/UKB/train1000/ratio1_5/20260525_123456/`
-
-单个实验目录通常包含：
-
-- `final_heuristic_model.py`
-- `final_comparison.txt`
-- `evolution_results.txt`
-- `iteration_log.json`
-- `heldout_test_summary.txt`
-
-`contrast2_hl.csv` 当前写出的列为：
-
-- `模型`
-- `数据集`
-- `训练集数据量`
-- `ACC`
-- `F1`
-- `Sensitivity`
-- `Specificity`
-
-其中：
-
-- `模型` 字段形如 `HL(1:5)`，训练集正负比被编码在这里，而不是单独一列
-- 排序顺序为 `数据集 -> 训练集数据量 -> 正负比`
-
-需要注意：
-
-- 脚本内部虽然生成了更完整的结果字典，包括 `status`、`out_dir`、`error` 等字段，但最终写入 `contrast2_hl.csv` 时只保留上面 7 列
-- 如果某次 HL 运行失败，该行对应指标通常会为空
-
-## 辅助脚本：回填 HL 混淆矩阵
-
-`fill_contrast2_hl_confusion.py` 用于给已有的 HL 结果 CSV 补充以下列：
-
-- `TP`
-- `FP`
-- `FN`
-- `TN`
-
-它的工作方式是：
-
-- 从文件名 `contrast2_hl_<seed>.csv` 中解析随机种子
-- 根据每行的 `数据集`、`训练集数据量` 与 `模型=HL(x:y)` 推断对应实验配置
-- 在输出目录中查找最新一次对应的 HL 实验目录
-- 读取其中的 `final_heuristic_model.py`
-- 在同一 seed 对应的 held-out test 上重新预测并回填混淆矩阵
-
-运行方式：
+### 运行一个种子的完整矩阵
 
 ```bash
-uv run python experiment/contrast2/fill_contrast2_hl_confusion.py --output-roots ./experiment/contrast2/outputs_hl_42
+uv run python experiment/contrast2/run_contrast2_hl.py --seed 42
 ```
 
-参数：
+默认写入 `experiment/contrast2/outputs_hl`。
 
-- `--repo-root`：仓库根目录，默认自动推断
-- `--output-roots`：逗号分隔的多个 HL 输出根目录；若留空，则自动扫描 `./experiment/contrast2/outputs_hl` 与 `./experiment/contrast2/outputs_hl_*`
+### 指定独立输出根目录
 
-注意：
-
-- 该脚本面向的是命名为 `contrast2_hl_<seed>.csv` 的结果文件
-- 当前 `run_contrast2_hl.py` 默认输出的汇总文件名是固定的 `experiment/contrast2/contrast2_hl.csv`，如果要配合这个补全脚本使用，通常需要你自己按 seed 另存为对应命名格式
-
-## 依赖安装
-
-如果需要完整运行所有常规模型和 HL 流程，建议在仓库根目录执行：
+建议每个种子使用独立目录：
 
 ```bash
-uv sync --group dev
+uv run python experiment/contrast2/run_contrast2_hl.py \
+  --seed 36 \
+  --output-root experiment/contrast2/outputs_hl_seed36
+
+uv run python experiment/contrast2/run_contrast2_hl.py \
+  --seed 40 \
+  --output-root experiment/contrast2/outputs_hl_seed40
+
+uv run python experiment/contrast2/run_contrast2_hl.py \
+  --seed 42 \
+  --output-root experiment/contrast2/outputs_hl_seed42
 ```
 
-额外说明：
+### 并行 HL 任务
 
-- `xgboost`、`lightgbm`、`torch` 主要影响 `run_contrast2.py`
-- HL 相关脚本还依赖项目主流程所需的 LLM 配置与运行环境
+```bash
+uv run python experiment/contrast2/run_contrast2_hl.py \
+  --seed 42 --workers 2 \
+  --output-root experiment/contrast2/outputs_hl_seed42
+```
+
+`--workers` 使用多进程执行独立 LLM 任务。提高并发会同时增加 API 请求速率、费用压力与本机资源占用。
+
+### HL 命令行参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--seed` | `42` | 本次 36 个任务共用的种子 |
+| `--workers` | `1` | LLM 任务并发进程数 |
+| `--output-root` | `experiment/contrast2/outputs_hl` | HL 产物根目录 |
+
+HL 入口没有数据集、训练总量、比例筛选或续跑参数。它每次都会执行完整 36 项矩阵，并重写固定汇总文件 `experiment/contrast2/contrast2_hl.csv`。连续运行多个种子时，应在下一次运行前保存当前汇总表。
+
+## 输出目录与文件
+
+### 基线结果
+
+每个种子的汇总表：
+
+```text
+experiment/contrast2/contrast2_rerun_seed<seed>.csv
+```
+
+每个模型任务目录：
+
+```text
+experiment/outputs_rerun/contrast2/
+└── seed<seed>/<数据集>/train<总量>/ratio<正>_<负>/<模型>/
+```
+
+汇总 CSV 包含模型、数据集、训练总量、类别比例、四项指标、TP、FP、FN、TN、`status` 和 `error`。任务目录包含：
+
+| 文件 | 内容 |
+| --- | --- |
+| `predictions.csv` | 源行标识、真实标签、预测标签和正类概率 |
+| `metrics.json` | 测试指标 |
+| `split_manifest.json` | 冻结划分、比例、抽样替换和源行哈希 |
+| `run_manifest.json` | 任务配置与状态 |
+| `resolved_config.json` | 实际模型参数 |
+| `environment.json` | 关键环境信息 |
+| `model.joblib` / `model.deeptab` / `model.corels` | 拟合模型 |
+| CORELS/EBM 附加文件 | 规则、谓词、预处理器或可解释性摘要 |
+| `error.txt` | 失败任务的详细错误 |
+
+### HL 结果
+
+固定汇总表：
+
+```text
+experiment/contrast2/contrast2_hl.csv
+```
+
+它当前包含模型标识、数据集、训练总量和四项指标，不包含状态、错误或混淆矩阵字段。单任务目录：
+
+```text
+<output-root>/<数据集>/train<总量>/ratio<正>_<负>/<时间戳>/
+```
+
+其中包括 `probe_univariate_results.csv`、`probe_knowledge.md`、`heuristic_system.py`、`evolution_results.txt`、`iteration_log.json`、`final_comparison.txt`、`final_heuristic_model.py` 和 `heldout_test_summary.txt`。最终模型可直接调用 `predict(features)`。
+
+每次任务创建新的时间戳目录；不要把新运行写进已有时间戳目录。
+
+## 为 HL 汇总补全混淆矩阵
+
+补全工具只扫描每个 `--output-roots` 根目录第一层、文件名符合 `contrast2_hl_<seed>.csv` 的汇总表。由于 HL 入口写出的固定文件名是 `experiment/contrast2/contrast2_hl.csv`，运行一个种子后需要将它复制到相应产物根目录并带上种子：
+
+```bash
+cp experiment/contrast2/contrast2_hl.csv \
+  experiment/contrast2/outputs_hl_seed42/contrast2_hl_42.csv
+
+uv run python experiment/contrast2/fill_contrast2_hl_confusion.py \
+  --output-roots experiment/contrast2/outputs_hl_seed42
+```
+
+多个根目录使用逗号分隔：
+
+```bash
+uv run python experiment/contrast2/fill_contrast2_hl_confusion.py \
+  --output-roots experiment/contrast2/outputs_hl_seed36,experiment/contrast2/outputs_hl_seed40,experiment/contrast2/outputs_hl_seed42
+```
+
+不传 `--output-roots` 时，工具自动检查 `experiment/contrast2/outputs_hl` 和匹配 `outputs_hl_*` 的目录。它会：
+
+1. 从文件名解析种子。
+2. 根据数据集、训练总量和比例找到最新时间戳产物。
+3. 加载 `final_heuristic_model.py`。
+4. 使用相同种子重建冻结测试集并重新预测。
+5. 在 Specificity 后插入 TP、FP、FN、TN。
+6. 原子更新 CSV；已有这四列的文件会跳过。
+
+`--repo-root` 通常不需要设置，只有从非标准目录调用或仓库位置无法自动解析时才指定。
+
+## 结果解读与注意事项
+
+- 类别不平衡仅作用于训练集；验证集和测试集保持平衡，便于比较 Sensitivity 与 Specificity 的偏移。
+- 应在同一模型、数据集、总量和种子内比较不同比例，再跨三个种子汇总。
+- 极端比例可能触发训练有放回抽样；应结合 `split_manifest.json` 的唯一源行数解释结果。
+- TP、FP、FN、TN 之和应为 1,000，与测试集大小一致。
+- HL 汇总不记录失败状态；若行缺失，应检查控制台输出和对应产物目录是否生成完整的最终模型。

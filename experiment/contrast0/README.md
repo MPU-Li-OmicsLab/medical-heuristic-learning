@@ -1,266 +1,185 @@
-# contrast0：启发式学习对比（不同大模型）
+# Contrast0：LLM 后端对比实验
 
-本目录用于比较不同大模型作为启发式学习后端时，对最终分类结果的影响。实验固定使用同一套启发式学习流程，仅替换 LLM 配置。
+本实验在完全相同的数据划分、启发式学习流程和评估方式下，对比 7 个 LLM 配置生成医学表格二分类白盒规则的效果。当前唯一入口是 `run_contrast0.py`；它负责构造数据划分、调用完整 Heuristic Learning（HL）流程、在独立测试集上评估，并按随机种子持续写出汇总表。
 
-当前目录下的主脚本是：
+所有命令都应在仓库根目录执行。
 
-- `run_contrast0.py`
+## 当前文件与入口
 
-## 实验目标
+| 文件 | 作用 | 是否直接运行 |
+| --- | --- | --- |
+| `experiment/contrast0/run_contrast0.py` | 执行全部或筛选后的 LLM 后端对比任务 | 是 |
+| `experiment/contrast0/README.md` | 本实验说明 | 否 |
 
-在两个数据集上，固定：
+## 运行前准备
 
-- 启发式学习流程
-- 探针设置
-- 数据切分方式
-- 训练集规模与类别比例
+### Python 与依赖
 
-只改变底层使用的大模型，比较最终 held-out test 指标的差异。
-
-## 数据与切分
-
-### 数据集
-
-- `UKB`：`./data/UKB.csv`，标签列 `label`
-- `YHD`：`./data/YHD_bicarbonate.csv`，标签列 `hospital_expire_flag`
-
-要求：
-
-- 标签必须是二分类 `0/1`
-- 正负样本数量必须足够支撑平衡的 `val/test` 抽样
-
-### 默认随机种子
-
-- 默认种子为 `36 40 42`（与 contrast1 / contrast2 一致）
-- 可用 `--seed 42` 覆盖为单个种子
-
-### 切分规则
-
-- `val`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
-- `test`：1000 条，按 `1:1` 抽样，即 `500` 正 + `500` 负
-- `train_pool`：除去 `val/test` 后剩余的样本
-
-### 训练集规则
-
-- 训练集总数固定为 `1000`
-- 训练集按 `1:1` 平衡采样，即目标为 `500` 正 + `500` 负
-- 若某一类样本不足，会对该类启用有放回采样以补足目标数量
-
-## 启发式学习设置
-
-每个实验都调用项目主流程 `run_heuristic_learning(...)`，固定配置为：
-
-- `run_univariate_probe=True`
-- `run_knowledge_probe=True`
-- `run_v0_generation=True`
-- `run_iterations=True`
-
-也就是说，这里比较的是完整的 `U1_K1` 启发式学习流程，而不是消融实验。<mccoremem id="project_memory" />
-
-训练方式为：
-
-- 将 `val_df` 传入 `run_heuristic_learning(..., val_df=val_df, ...)`
-- 用验证集结果选择最终导出的 `final_heuristic_model.py`
-- 训练结束后，再用该最终模型在 held-out `test_df` 上重新评估
-- 把 held-out test 指标写入汇总 CSV 和实验目录下的摘要文件
-
-此外，脚本会把 `seed` 传入 `RunConfig.random_seed`，用于增强流程可复现性。
-
-## 对比的大模型
-
-脚本当前内置 7 个模型配置：
-
-- `deepseek-v4-pro-high`
-- `deepseek-v4-pro-max`
-- `deepseek-v4-flash-high`
-- `deepseek-v4-flash-max`
-- `qwen/qwen3.7-max`
-- `gemini-3.1-pro-preview`
-- `gpt-5.5`
-
-这些模型会分别在两个数据集上运行，因此每个种子执行：
-
-- `7 个模型 × 2 个数据集 = 14` 个实验
-
-### 各模型来源
-
-- DeepSeek：
-  - `deepseek-v4-pro`，思考强度 `high`
-  - `deepseek-v4-pro`，思考强度 `max`
-  - `deepseek-v4-flash`，思考强度 `high`
-  - `deepseek-v4-flash`，思考强度 `max`
-- OpenRouter：
-  - `qwen/qwen3.7-max`
-- vveai：
-  - `gemini-3.1-pro-preview`
-  - `gpt-5.5`
-
-### DeepSeek 思考模式
-
-四个 DeepSeek 条目都显式开启思考模式，并把显示名后缀（`high` / `max`）作为
-`thinking_strength` 传入。以 `deepseek-v4-pro-high` 为例，脚本内部构造：
-
-```python
-LLMConfig(
-    model_name="deepseek-v4-pro",
-    thinking_mode=True,
-    thinking_strength="high",
-)
-```
-
-即请求中会携带 `extra_body={"thinking": {"type": "enabled"}}` 和
-`reasoning_effort="high"`；`max` 条目则携带 `reasoning_effort="max"`。
-其余三个非 DeepSeek 模型不传思考参数，按各自后端默认行为执行。
-
-## API Key 与 Base URL
-
-### 默认环境变量
-
-- DeepSeek：`DEEPSEEK_API_KEY`
-- OpenRouter：`OPENROUTER_API_KEY`
-- vveai Gemini：`VVEAI_GEMINI_API_KEY`
-- vveai GPT-5.5：`VVEAI_GPT55_API_KEY`
-
-### 默认 Base URL
-
-- DeepSeek：`https://api.deepseek.com/v1`
-- OpenRouter：`https://openrouter.ai/api/v1`
-- vveai：`https://api.vveai.com/v1`
-
-注意：
-
-- 脚本内部会先读取 `https://api.vveai.com`，再自动规范化为以 `/v1` 结尾的地址
-
-### 可覆盖的环境变量
-
-如需自定义接口地址或 key 变量名，可使用以下覆盖项：
-
-- `CONTRAST0_DEEPSEEK_BASE_URL`
-- `CONTRAST0_DEEPSEEK_KEY_ENV`
-- `CONTRAST0_ROUTER_BASE_URL`
-- `CONTRAST0_ROUTER_KEY_ENV`
-- `CONTRAST0_VVEAI_BASE_URL`
-- `CONTRAST0_VVEAI_GEMINI_KEY_ENV`
-- `CONTRAST0_VVEAI_GPT55_KEY_ENV`
-
-## 指标
-
-汇总表中输出以下 held-out test 指标：
-
-- `ACC`
-- `F1`
-- `Sensitivity`
-- `Specificity`
-
-## 运行方式
-
-命令行风格与 contrast1 / contrast2 对齐，请在仓库根目录运行，例如完整跑一遍：
+项目要求 Python 3.11 及以上，仓库的 `.python-version` 当前指定 3.11。Contrast0 只使用项目运行时依赖：
 
 ```bash
-export DEEPSEEK_API_KEY="你的 deepseek key"
-export OPENROUTER_API_KEY="你的 openrouter key"
-export VVEAI_GEMINI_API_KEY="你的 gemini key"
-export VVEAI_GPT55_API_KEY="你的 gpt-5.5 key"
-
-uv run python experiment/contrast0/run_contrast0.py \
-  --models all --seeds 36 40 42 --resume
+uv sync --no-dev
 ```
 
-只跑 DeepSeek 四个组合时：
+如果还要运行需要传统机器学习、深度学习或 CORELS 的实验，也可以统一执行 `uv sync` 安装开发依赖组。项目不维护锁文件，因此命令不使用 `--locked` 或 `--frozen`。
+
+### 数据文件
+
+| 数据集 | CSV 路径 | 标签列 |
+| --- | --- | --- |
+| UKB | `data/UKB.csv` | `label` |
+| YHD | `data/YHD_bicarbonate.csv` | `hospital_expire_flag` |
+
+标签必须能转换为整数 `0/1`。每个数据集会先抽取 1,000 条平衡验证集和 1,000 条平衡测试集，两者互不重叠；剩余训练池还必须同时包含正、负样本。
+
+### API 密钥与服务地址
+
+只需配置本次选中模型对应的密钥：
+
+| 模型 | 默认服务 | 默认密钥环境变量 |
+| --- | --- | --- |
+| `deepseek-v4-pro-high` | DeepSeek | `DEEPSEEK_API_KEY` |
+| `deepseek-v4-pro-max` | DeepSeek | `DEEPSEEK_API_KEY` |
+| `deepseek-v4-flash-high` | DeepSeek | `DEEPSEEK_API_KEY` |
+| `deepseek-v4-flash-max` | DeepSeek | `DEEPSEEK_API_KEY` |
+| `qwen/qwen3.7-max` | OpenRouter | `OPENROUTER_API_KEY` |
+| `gemini-3.1-pro-preview` | vveai | `VVEAI_GEMINI_API_KEY` |
+| `gpt-5.5` | vveai | `VVEAI_GPT55_API_KEY` |
+
+```bash
+export DEEPSEEK_API_KEY="你的密钥"
+export OPENROUTER_API_KEY="你的密钥"
+export VVEAI_GEMINI_API_KEY="你的密钥"
+export VVEAI_GPT55_API_KEY="你的密钥"
+```
+
+支持以下覆盖变量：
+
+| 环境变量 | 默认值或作用 |
+| --- | --- |
+| `CONTRAST0_DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` |
+| `CONTRAST0_DEEPSEEK_KEY_ENV` | `DEEPSEEK_API_KEY` |
+| `CONTRAST0_ROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
+| `CONTRAST0_ROUTER_KEY_ENV` | `OPENROUTER_API_KEY` |
+| `CONTRAST0_VVEAI_BASE_URL` | `https://api.vveai.com`，脚本会规范为 `/v1` 地址 |
+| `CONTRAST0_VVEAI_GEMINI_KEY_ENV` | `VVEAI_GEMINI_API_KEY` |
+| `CONTRAST0_VVEAI_GPT55_KEY_ENV` | `VVEAI_GPT55_API_KEY` |
+
+## 实验设计
+
+每个“模型 × 数据集 × 随机种子”组合独立运行一次完整 HL 流程：
+
+1. 按种子抽取 500 个正例和 500 个负例作为测试集。
+2. 再抽取 500 个正例和 500 个负例作为验证集，且不与测试集重叠。
+3. 从剩余训练池抽取 1,000 条 1:1 平衡训练数据；某一类别不足 500 条时允许有放回抽样。
+4. 使用相同的 HL 配置完成单变量探测、知识生成、初始规则和迭代优化。
+5. 加载 `final_heuristic_model.py`，仅在最后对保留测试集评估。
+6. 报告 Accuracy、F1、Sensitivity 和 Specificity。
+
+DeepSeek 的四个配置分别组合 `pro/flash` 模型与 `high/max` thinking strength；所有配置温度均为 0。默认种子为 `36 40 42`，完整运行共有：
+
+```text
+7 个 LLM 配置 × 2 个数据集 × 3 个种子 = 42 个任务
+```
+
+## 入口运行方式
+
+### 完整运行
+
+```bash
+uv run python experiment/contrast0/run_contrast0.py
+```
+
+LLM 调用耗时和费用都可能较高，建议先执行最小任务确认数据与密钥。
+
+### 最小可运行检查
 
 ```bash
 uv run python experiment/contrast0/run_contrast0.py \
-  --models deepseek-v4-pro-high,deepseek-v4-pro-max,deepseek-v4-flash-high,deepseek-v4-flash-max \
-  --seeds 36 40 42 --resume
+  --models deepseek-v4-pro-high \
+  --datasets UKB \
+  --seeds 42
 ```
 
-参数说明：
+### 筛选多个模型、数据集和种子
 
-- `--models`：`all` 或逗号分隔的模型显示名列表
-- `--seeds`：一次运行多个种子，默认 `36 40 42`
-- `--seed`：兼容旧命令的单个种子覆盖（如 `--seed 42`）
-- `--datasets`：选择要运行的数据集（`UKB` / `YHD`）
-- `--workers`：多进程并发数，默认 `1`
-- `--output-root`：实验输出根目录，默认位于 `./experiment/contrast0/outputs`
-- `--resume`：读取对应种子的结果 CSV，跳过已成功的 `(模型, 数据集)` 任务
-- `--retry-errors`：配合 `--resume` 使用，只重跑上次失败的 `(模型, 数据集)` 任务
-- `--rerun-existing`：配合 `--resume` 使用，强制重跑已选任务
+`--models` 使用逗号分隔，`--datasets` 和 `--seeds` 使用空格分隔：
 
-说明：
+```bash
+uv run python experiment/contrast0/run_contrast0.py \
+  --models deepseek-v4-pro-high,qwen/qwen3.7-max \
+  --datasets UKB YHD \
+  --seeds 36 42
+```
 
-- 当 `workers > 1` 时，会按 `(模型, 数据集)` 粒度并行执行
-- 并发过高可能触发 API 限流，也会更快消耗余额
-- 对 LLM 类实验，建议先从 `1` 开始测试，再逐步提升
+### 并行运行
 
-## 输出说明
+```bash
+uv run python experiment/contrast0/run_contrast0.py --workers 2
+```
 
-### 汇总表
+`--workers` 使用多进程并发执行独立 LLM 任务。提高并发前应确认服务商速率限制、账户额度和本机内存。
 
-脚本按种子写出结果 CSV（与 contrast1 / contrast2 的命名方式一致）：
+### 续跑、重试和强制重跑
 
-- `experiment/contrast0/contrast0_rerun_seed{seed}.csv`，例如
-  `contrast0_rerun_seed36.csv` / `contrast0_rerun_seed40.csv` /
-  `contrast0_rerun_seed42.csv`
+```bash
+uv run python experiment/contrast0/run_contrast0.py --resume
+uv run python experiment/contrast0/run_contrast0.py --resume --retry-errors
+uv run python experiment/contrast0/run_contrast0.py --rerun-existing
+```
 
-该文件列为：
+单独使用 `--resume` 会跳过汇总表中所有已有任务，包括错误任务；与 `--retry-errors` 同时使用才会重新执行错误项。`--rerun-existing` 会强制重跑当前筛选范围内的已有项。
 
-- `大模型`
-- `数据集`
-- `ACC`
-- `F1`
-- `Sensitivity`
-- `Specificity`
-- `status`（`ok` / `error`）
-- `error`（失败原因，成功时为空）
+## 命令行参数
 
-排序顺序为：
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--models` | `all` | 全部模型，或逗号分隔的精确模型名 |
+| `--seeds` | `36 40 42` | 一个或多个随机种子 |
+| `--seed` | 无 | 单种子快捷覆盖；设置后覆盖 `--seeds` |
+| `--datasets` | `UKB YHD` | 一个或两个数据集 |
+| `--workers` | `1` | LLM 任务并发进程数 |
+| `--output-root` | `experiment/contrast0/outputs` | 单次 HL 产物根目录 |
+| `--resume` | 关闭 | 按每个种子的汇总 CSV 跳过已有任务 |
+| `--retry-errors` | 关闭 | 与 `--resume` 配合，重新执行错误项 |
+| `--rerun-existing` | 关闭 | 强制重新执行当前筛选出的已有项 |
 
-- 先按模型在脚本中的定义顺序
-- 再按数据集顺序 `UKB -> YHD`
+## 输出目录与文件
 
-需要注意：
+每个种子维护一个汇总 CSV：
 
-- 如果某个实验失败，脚本仍会保留这一行，但对应指标会是空字符串，
-  且 `status=error`
-- `--resume` 按 `(大模型, 数据集)` 粒度跳过该种子 CSV 中已成功的任务
-- 旧版 `contrast0.csv` 与 `contrast0_36/40/42.csv` 不再由本脚本写入，
-  保留为历史文件
+```text
+experiment/contrast0/contrast0_rerun_seed<seed>.csv
+```
 
-### 单个实验目录
+脚本在每个任务结束后原子更新 CSV，字段包括大模型、数据集、四项指标、`status` 和 `error`，因此中途终止时已完成结果仍可用于续跑。
 
-每个实验会输出到：
+每个任务的产物目录为：
 
-- `experiment/contrast0/outputs/<DATASET>/<MODEL>/<TIMESTAMP>/`
+```text
+<output-root>/<数据集>/<模型名>/<时间戳>/
+```
 
-如果使用 `--output-root`，则路径变为：
+模型名中的 `/` 会替换成 `_`。主要文件：
 
-- `<output-root>/<DATASET>/<MODEL>/<TIMESTAMP>/`
+| 文件 | 内容 |
+| --- | --- |
+| `probe_univariate_results.csv` | 单变量探测结果 |
+| `probe_knowledge.md` | 为规则生成整理的领域知识 |
+| `heuristic_system.py` | 从 `v0` 开始逐轮演化的规则系统 |
+| `evolution_results.txt` | 各版本验证指标 |
+| `iteration_log.json` | 逐轮运行记录 |
+| `final_heuristic_model.py` | 最终可直接调用 `predict(features)` 的白盒规则 |
+| `final_comparison.txt` | 最终版本比较 |
+| `heldout_test_summary.json` | 保留测试集指标及运行元数据 |
+| `heldout_test_summary.txt` | 便于人工阅读的测试摘要 |
 
-其中目录名里的 `<MODEL>` 会把 `/` 替换成 `_`，例如：
+每次新任务都会创建带时间戳的目录，不应手工复用已有任务目录。汇总 CSV 是续跑状态入口，具体模型和诊断信息以产物目录为准。
 
-- `qwen/qwen3.7-max` 会写成 `qwen_qwen3.7-max`
+## 结果解读与注意事项
 
-示例：
-
-- `experiment/contrast0/outputs/UKB/deepseek-v4-pro-high/20260525_123456/`
-- `experiment/contrast0/outputs/YHD/qwen_qwen3.7-max/20260525_123501/`
-
-单个实验目录通常包含：
-
-- `heuristic_system.py`
-- `final_heuristic_model.py`
-- `final_comparison.txt`
-- `evolution_results.txt`
-- `iteration_log.json`
-- `heldout_test_summary.json`
-- `heldout_test_summary.txt`
-
-其中：
-
-- `heldout_test_summary.json` 会记录数据集、模型显示名、实际模型名、`base_url`、`api_key_env`、训练采样信息、最终版本号与 held-out test 指标
-- `heldout_test_summary.txt` 是便于快速浏览的文本摘要
-
-## 其他说明
-
-- 脚本会在运行时自动回到仓库根目录加入 `sys.path`，因此可以直接使用 `python experiment/contrast0/run_contrast0.py` 这种按路径执行的方式
-- 与 `ablation` 不同，这里没有额外生成 `index.json` 一类的批次级索引文件
+- 四项指标都来自未参与训练和规则迭代的 1,000 条平衡测试集。
+- 不同种子会改变训练、验证和测试样本，应按模型、数据集汇总三个种子的结果。
+- 训练集在类别不足时可能有放回抽样；相关采样元数据会写入测试摘要。
+- `status=error` 时先查看汇总表的 `error` 和产物目录，再使用 `--resume --retry-errors`。
+- 并发不会改变单任务的数据种子，但可能更快触发 API 限流。
