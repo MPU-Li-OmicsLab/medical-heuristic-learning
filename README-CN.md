@@ -1,531 +1,210 @@
-# Medical Heuristic Learning
+![Medical Heuristic Learning](./supporting_files/medical-heuristic-learning-light.svg)
 
-参考引用：[Learning Beyond Gradients](https://trinkle23897.github.io/learning-beyond-gradients/)
+# Medical Heuristic Learning（MHL）
 
-[English README](./README.md) | [Arxiv Paper](https://arxiv.org/abs/2606.16337)
+[![PyPI Version](https://img.shields.io/pypi/v/medical-heuristic-learning?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/medical-heuristic-learning/)
+[![PyPI Python Version](https://img.shields.io/pypi/pyversions/medical-heuristic-learning?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/medical-heuristic-learning/)
+[![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![arXiv](https://img.shields.io/badge/arXiv-2606.16337-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2606.16337)
+[![Apache-2.0 License](https://img.shields.io/badge/License-Apache--2.0-green?style=for-the-badge)](./LICENSE)
+[![LI-OMICSLAB](https://img.shields.io/badge/LI--OMICSLAB-00795E?style=for-the-badge)](https://liomicslab.cn/)
 
-## 摘要
+**医学启发式学习（Medical Heuristic Learning, MHL）是一种将大语言模型用作白盒规则生成器的医学表格数据预测范式，尤其适用于小样本、严重类别不平衡以及对模型可解释性和可审计性要求较高的场景。**
 
-面向临床表格数据的预测建模是临床决策支持的核心，因此不仅需要强预测性能，也需要透明的决策逻辑。尽管深度学习和基于树的集成方法可以取得较高准确率，但它们的黑盒性质仍然是临床部署的主要障碍。医学数据的一些常见特征进一步加剧了这一挑战，包括有限的样本量、严重的类别不平衡，以及由诊断标准和临床记录变化所引起的特征演化。为了解决这些问题，我们提出了 Medical Heuristic Learning（MHL），这是 learning-beyond-gradients 范式在临床表格预测中的一种实例化。MHL 不依赖神经网络权重更新，而是使用由大语言模型（LLM）驱动的工作流，将统计探针、医学知识探针、规则合成和代码级迭代优化整合起来，以优化一个确定且可执行的决策系统。最终得到的模型不是不透明的参数，而是版本化的纯 Python 决策规则，这些规则具有显式可解释性、完全可审计性和临床依据。MHL 还支持持续学习，即从先前已经验证的规则出发，在数据漂移或特征演化下，利用更新后的特征信息对这些规则进行迭代修订。对医学数据集的综合实验表明，MHL 在保持小样本和高度不平衡场景下良好表现的同时，取得了与 state-of-the-art 方法可比的性能。结果还进一步表明，这种显式规则更新机制有助于缓解特征演化下的灾难性遗忘。总体来看，这些发现表明，非梯度启发式系统为高风险临床决策支持提供了一种透明且可适应的替代方案。
+简体中文 · [English](./README.md) · [论文](https://arxiv.org/abs/2606.16337) · [API 文档](./docs/API-CN.md)
 
-![Medical Heuristic Learning 总览](./supporting_files/fig1.jpg)
+## 概述（Overview）
 
-## 仓库内容
+MHL 是 [Learning Beyond Gradients](https://trinkle23897.github.io/learning-beyond-gradients/) 范式在结构化医学数据预测中的一种实现。与把知识吸收到不可见参数中的训练方式不同，MHL 将统计证据、医学先验和验证反馈转化为版本化、可执行的纯 Python 决策规则。
 
-Medical Heuristic Learning（MHL）是一个面向临床表格预测的轻量级框架，其核心产物不是训练得到的参数权重，而是可执行的规则代码。`hl/` 主干当前实现了：
+- **白盒产物**：最终模型是确定性的 `predict(features: dict) -> int` 规则函数，而不是难以审计的参数权重。
+- **双探针约束**：统计探针提供描述性统计和单变量关联；医学知识探针提供临床解释、候选阈值与证据置信度。
+- **受控规则演化**：LLM 生成初始规则，并依据错误病例、退化病例、指标优先级和版本轨迹进行小步代码修订。
+- **面向困难数据条件**：框架重点服务于小样本、类别严重不平衡以及需要透明决策依据的医学表格预测任务。
+- **持续学习**：当特征被新增、删除或重命名时，系统继承上一阶段的探针与规则产物，在新证据下显式修订既有逻辑。
+- **测试保障**：核心流程由 `pytest` 测试覆盖，可直接接入 CI 持续测试；CI 状态徽章将在后续补充。
 
-- 基于训练集的单变量统计探针；
-- 可选的 LLM 医学知识探针；
-- 由 LLM 合成的初始规则函数 `predict_v0(features: dict) -> int`；
-- 基于训练错误样本与退化样本提示的代码级迭代优化；
-- 最终导出稳定入口 `predict(features: dict) -> int`。
+论文全文与实验设计请参阅：[Medical Heuristic Learning: An LLM-Driven Framework for Interpretable and Auditable Clinical Decision Rules](https://arxiv.org/abs/2606.16337)。
 
-此外，仓库还提供了面向特征漂移的持续学习流程。它不是完全从零重建规则，而是从上一轮 HL 输出目录出发，在删除、新增或重命名特征的条件下继承已有规则逻辑并继续适配。
-
-## 实验发现
-
-基于在多个医学数据集（包括 UK Biobank (UKB)、重症监护信息数据库 (CCID) 和 MIMIC）上的综合评估，并与具有代表性的基线模型（Logistic Regression、决策树、XGBoost、LightGBM、MLP、FT-Transformer）进行对比，MHL 展现出以下核心优势：
-
-- **小样本场景下的鲁棒性**：在低资源条件（如 $n < 100$）下，MHL 始终优于黑盒基线模型。当标注数据稀缺时，医学先验知识和显式规则结构弥补了纯统计学习器的脆弱性。
-- **应对极端类别不平衡的恢复力**：在高度倾斜的分布（如 50:1 或 1:50）下，许多黑盒模型会退化为近乎单边的预测。而在显式错误分析和退化警告的引导下，MHL 能够在少数类检测和多数类控制之间保持可用的平衡。
-- **避免灾难性遗忘的持续学习**：当特征空间发生演化（例如，在败血症评估中从 SIRS 标准过渡到 SOFA 标准）时，传统模型会遭受严重的性能下降。MHL 通过显式识别废弃特征并通过代码级规则修订引入新信号来进行适配，从而避免了因覆盖隐藏参数而导致的灾难性遗忘。
-- **探针的互补性**：消融实验证实，结合统计探针（提供经验信号）和医学知识探针（提供临床先验和阈值），可以获得最稳定、最不容易失效的性能。
-- **LLM 后端的跨平台能力**：MHL 在不同的基座模型（如 DeepSeek、Gemini、GPT、Qwen）上均保持高效。结构化的工作流限制了幻觉的产生，并确保了生成的规则无论使用何种具体后端都是确定且可用的。
-
-## 核心工作流
-
-### 标准启发式学习
-
-`hl.orchestrator.run_heuristic_learning(...)` 固定执行四个阶段：
-
-1. 对 `train_df` 运行单变量统计探针。
-2. 在启用 LLM 时运行知识探针。
-3. 生成 `predict_v0` 并写入 `heuristic_system.py`。
-4. 迭代追加 `predict_v1`、`predict_v2` 等版本，并将最佳版本导出为 `final_heuristic_model.py`。
-
-主流程会先校验：
-
-- `label_col` 是否同时存在于 `train_df` 和 `val_df`；
-- 去除标签列后，训练集与验证集的特征集合是否一致。
-
-### 特征漂移下的持续学习
-
-`hl.continuous_learning.run_continuous_learning(...)` 仍然采用四阶段结构，但语义是漂移感知的：
-
-1. 读取 `DriftConfig.prev_hl_out_dir` 指定的上一轮 HL 输出目录。
-2. 在新的特征空间下更新单变量探针结果。
-3. 尽可能保留并更新已有知识探针结果。
-4. 基于旧的最终模型蓝本生成新的漂移感知 `predict_v0`，再继续执行迭代优化。
-
-持续学习还会额外把漂移上下文和上一轮 probe 快照写入输出目录。
-
-## 仓库结构
-
-- `hl/config.py`
-  标准流程配置数据类：`LLMConfig` 与 `RunConfig`。
-- `hl/orchestrator/`
-  标准启发式学习入口与四个阶段实现。
-- `hl/continuous_learning/`
-  漂移配置、持续学习入口与各阶段实现。
-- `hl/probes/`
-  统计探针与知识探针实现。
-- `hl/agent/`
-  OpenAI 兼容 LLM client，以及标准流程和持续学习专用 prompt 模板。
-- `hl/evolution/`
-  错误样本采样、退化检测、规则解析与语法校验工具。
-- `hl/metrics.py`
-  指标计算与指标优先级描述生成。
-- `hl/model.py`
-  用于加载可信 MHL 导出模型文件的公共入口。
-- `hl/result.py`
-  标准流程与持续学习流程共用的 `RunResult` 产物路径返回类型。
-- `hl/utils/`
-  文本/JSON 写入与标准库进度日志工具。
-- `example_training.py`
-  基于 `./data/YHD_bicarbonate.csv` 的端到端训练示例，输出到 `./example_out`。
-- `example_inference.py`
-  加载 `./example_out/final_heuristic_model.py` 的推理示例。
-- `example_continuous_learning.py`
-  删除 `wbc` 特征以模拟漂移，并输出到 `./example_out_continuous_learning`。
-- `experiment/`
-  与可复用 `hl/` 主干分离的实验目录；`experiment/modeling/` 是共享的对比
-  模型层，`experiment/outputs_rerun/` 保存重跑实验的产物与 manifest。
-- `RUN_GUIDE.md`
-  中文快速上手指南：安装、根目录示例、`RunConfig` 开关与实验命令。
-
-## 产物契约
-
-生成出来的规则文件不是任意格式，后续脚本依赖明确约定。
-
-### `heuristic_system.py`
-
-- 首次生成时以 `CURRENT_VERSION = 'v0'` 开头；
-- 包含 `predict_v0`、`predict_v1`、`predict_v2` 这类版本化规则函数；
-- 可包含各版本对应的 `ERROR_ANALYSIS_predict_vX` 字符串；
-- 迭代优化时通过追加新版本保留历史，而不是覆盖重写。
-
-### `final_heuristic_model.py`
-
-- 包含 `FINAL_VERSION = "vX"`；
-- 内嵌累计的规则代码；
-- 暴露稳定的 `predict(features: dict) -> int` 入口，并转发到最终选中的 `predict_vX`。
-
-## 安装
-
-环境要求：
-
-- Python `>=3.11,<3.14`（上限来自 DeepTab 2.0.0 的依赖约束）
-- 推荐包管理器：`uv`
-
-安装示例和实验常用的完整依赖（`uv` 默认就会安装 `dev` 组）：
-
-```bash
-uv sync
-```
-
-仅安装基础依赖时：
-
-```bash
-uv sync --no-dev
-```
-
-`pyproject.toml` 中当前的依赖分组为：
-
-- 运行时：`numpy`、`openai`、`pandas`（固定 `<3.0`）、`scipy`、`socksio`
-- 开发组：`scikit-learn`、`lightgbm`、`torch`、`xgboost`、`deeptab==2.0.0`、
-  `interpret-core[aplr]==0.7.8`、`aplr==10.23.0`、`corels==1.1.29`、
-  `cython`、`setuptools`、`wheel`
-
-官方 `corels` 1.1.29 源码包需要 C++ 工具链；在全新 Python 3.11 / NumPy 2
-环境下，需先用 dev 组中的 Cython 3 从 `_corels.pyx` 重新生成 C++ 再构建 wheel
-（详见 `RUN_GUIDE.md`）。
-
-实际运行提示：当前 `hl/metrics.py` 会直接导入 `scikit-learn` 计算指标，因此按照现有代码，若要运行完整训练或持续学习流程，应安装 `dev` 依赖组。
+> [!NOTE]
+> 本项目面向科研与方法学验证，不应在缺少独立临床验证、风险评估和专业监督的情况下直接用于临床决策。
 
 ## 快速开始
 
-先设置 API Key：
+### 1. 使用 pip 安装
+
+运行环境要求 Python 3.11 或更高版本。PyPI 发布后可直接安装：
+
+```bash
+python -m pip install medical-heuristic-learning
+```
+
+当前尚未发布到 PyPI，可从 GitHub 或本地源码安装：
+
+```bash
+python -m pip install "git+https://github.com/MPU-Li-OmicsLab/medical-heuristic-learning.git"
+```
+
+```bash
+git clone https://github.com/MPU-Li-OmicsLab/medical-heuristic-learning.git
+cd medical-heuristic-learning
+python -m pip install -e .
+```
+
+默认 LLM 后端使用 OpenAI 兼容接口。以 DeepSeek 配置为例：
 
 ```bash
 export DEEPSEEK_API_KEY="your-api-key"
 ```
 
-运行标准训练示例：
+### 2. 运行 MHL
 
-```bash
-uv run python example_training.py
-```
-
-运行推理示例：
-
-```bash
-uv run python example_inference.py
-```
-
-运行持续学习示例：
-
-```bash
-uv run python example_continuous_learning.py
-```
-
-### 根目录示例脚本实际行为
-
-- `example_training.py`
-  读取 `./data/YHD_bicarbonate.csv`，标签列为 `hospital_expire_flag`，使用 `0:500` 行作为训练集、`500:1000` 行作为验证集，输出到 `./example_out`。
-- `example_inference.py`
-  从 `./example_out/final_heuristic_model.py` 加载模型，并对 `./data/YHD_bicarbonate.csv` 的最后 5 行做推理。
-- `example_continuous_learning.py`
-  复用 `./example_out` 作为上一阶段产物，删除 `wbc` 特征模拟新环境漂移，并写入 `./example_out_continuous_learning`。
-
-## 最小调用示例
-
-### 标准流程
+`train_df` 与 `val_df` 均须包含标签列，且移除标签后的特征集合必须一致。
 
 ```python
-from hl.config import LLMConfig, RunConfig
-from hl.orchestrator import run_heuristic_learning
+from pathlib import Path
 
-run_cfg = RunConfig()
-llm_cfg = LLMConfig(
-    api_key="your-api-key",  # 可选；不传时从 api_key_env 读取
-)
+from hl import LLMConfig, RunConfig, run_heuristic_learning
 
 result = run_heuristic_learning(
     train_df=train_df,
     val_df=val_df,
     label_col="hospital_expire_flag",
-    run_cfg=run_cfg,
-    llm_cfg=llm_cfg,
+    run_cfg=RunConfig(
+        output_dir=Path("./mhl_out"),
+        iterations=10,
+        task_description="预测住院死亡风险。",
+    ),
+    llm_cfg=LLMConfig(api_key_env="DEEPSEEK_API_KEY"),
 )
 
-print(result.out_dir)
 print(result.final_model_path)
 ```
 
-### 持续学习流程
+完整可运行示例：[example_training.py](./example_training.py)。
+
+### 3. 重载模型并推理
+
+导出的模型同时支持单行字典输入和 `DataFrame` 批量输入：
+
+```python
+from hl import load_batch_model, load_model
+
+predict_one = load_model("./mhl_out/final_heuristic_model.py")
+prediction = predict_one({"age": 68, "wbc": 13.2})
+
+predict_batch = load_batch_model("./mhl_out/final_heuristic_model.py")
+predictions = predict_batch(feature_dataframe)
+```
+
+输入只能包含模型特征；标签剔除和其他预处理由调用方负责。模型文件是可执行 Python 代码，因此只应加载可信来源的产物。完整示例：[example_inference.py](./example_inference.py)。
+
+### 4. 持续学习
+
+持续学习需要提供上一阶段输出目录，并显式描述新增、删除或重命名的特征：
 
 ```python
 from pathlib import Path
 
-from hl.config import LLMConfig
-from hl.continuous_learning import ContinuousLearningConfig, DriftConfig, run_continuous_learning
-
-llm_cfg = LLMConfig(api_key="your-api-key")
-continuous_cfg = ContinuousLearningConfig(
-    drift=DriftConfig(
-        dropped_cols=("old_feature",),
-        added_cols=("new_feature",),
-        renamed_cols=(("old_name", "new_name"),),
-        change_note="在这里描述特征漂移。",
-        prev_hl_out_dir=Path("./example_out"),
-    )
+from hl import (
+    ContinuousLearningConfig,
+    DriftConfig,
+    LLMConfig,
+    run_continuous_learning,
 )
 
 result = run_continuous_learning(
-    train_df=train_df,
-    val_df=val_df,
+    train_df=new_train_df,
+    val_df=new_val_df,
     label_col="hospital_expire_flag",
-    llm_cfg=llm_cfg,
-    continuous_cfg=continuous_cfg,
-)
-
-print(result.out_dir)
-print(result.final_model_path)
-```
-
-## 输出目录与文件
-
-当 `RunConfig.output_dir is None` 时，标准流程输出到：
-
-- `./out/<时间戳>/`
-
-当 `ContinuousLearningConfig.output_dir is None` 时，持续学习流程输出到：
-
-- `./out/<时间戳>_continuous_learning/`
-
-标准 HL 典型产物包括：
-
-- `probe_univariate_results.csv`
-- `probe_knowledge.md`
-- `heuristic_system.py`
-- `evolution_results.txt`
-- `iteration_log.json`
-- `final_heuristic_model.py`
-- `final_comparison.txt`
-
-持续学习会额外产出：
-
-- `continuous_learning_context.json`
-- `probe_univariate_results_prev.csv`
-- `probe_knowledge_prev.md`
-
-## 运行时行为
-
-`hl/` 主干通过标准 `hl` logger 记录 INFO 级阶段进度，典型信息包括：
-
-- 整体运行开始与结束；
-- 输出目录解析结果；
-- 单变量探针、知识探针、`v0` 生成、迭代优化的阶段边界；
-- LLM 重试失败原因、被接受的新版本以及检测到的回归样本。
-
-日志由 `hl/utils/progress.py` 实现。库本身不配置 logging handler；应用可以显式启用进度日志：
-
-```python
-import logging
-
-logging.basicConfig(level=logging.INFO)
-```
-
-## Prompt 与规则约束
-
-当前 `hl/agent/prompts.py` 与 `hl/agent/continuous_prompts.py` 中的 prompt 约束包括：
-
-- LLM 输出正文必须使用英文；
-- `v0` 生成与迭代更新都要求返回严格 JSON；
-- 规则必须是自包含的纯 Python；
-- 规则只能使用 Python 标准库，不能依赖第三方包；
-- 每个 `if` / `elif` / `else` 分支都必须带英文注释，说明医学依据或设计意图；
-- 每个特征值都必须从 `features` 字典读取（`features["col"]` 或 `features.get("col")`），禁止把特征名写成裸变量；
-- 迭代更新强调小步修改，而不是整份函数重写。
-
-代码侧会在接受提案前校验 JSON 结构、Python 语法、函数名以及未定义变量引用。
-
-## API 概览
-
-### `LLMConfig`
-
-用于配置 OpenAI 兼容后端。
-
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `base_url` | `str` | `"https://api.deepseek.com/v1"` | API 基础地址。 |
-| `api_key` | `str \| None` | `None` | 直接传入的 API Key；若提供则优先使用。 |
-| `api_key_env` | `str` | `"DEEPSEEK_API_KEY"` | 未显式传入 `api_key` 时读取的环境变量名。 |
-| `model_name` | `str` | `"deepseek-v4-pro"` | 传给 OpenAI 兼容 client 的模型名。 |
-| `temperature` | `float` | `0.3` | 采样温度。 |
-| `extra_body` | `dict \| None` | `None` | 后端特定能力需要的额外请求体。 |
-| `thinking_mode` | `bool \| None` | `None` | DeepSeek 思考模式开关。`None`（默认）不发送任何参数，完全按后端官方默认（DeepSeek 当前默认开启思考、effort 为 `high`）；`True`/`False` 显式开启/关闭。 |
-| `thinking_strength` | `str \| None` | `None` | 思考开启时作为 `reasoning_effort` 传入的思考强度，取值 `low` / `medium` / `high` / `xhigh` / `max`；`thinking_mode` 为 `None` 时设置它会自动开启思考。 |
-
-Key 解析逻辑：
-
-- 若传入 `api_key`，直接使用；
-- 否则读取 `api_key_env` 指定的环境变量；
-- 若启用了 LLM 且两者都不可用，则初始化 client 时抛错。
-
-思考模式行为：
-
-- `thinking_mode=None`（默认值）不发送任何 `thinking` 参数，完全按后端官方默认（DeepSeek 当前默认开启思考，effort 默认 `high`）。
-- `thinking_mode=True` 时发送 `extra_body={"thinking": {"type": "enabled"}}`；`thinking_mode=False` 时发送 `extra_body={"thinking": {"type": "disabled"}}`。
-- 思考开启且设置了 `thinking_strength` 时，同时发送 OpenAI 兼容的 `reasoning_effort` 参数；`thinking_mode` 为 `None` 时单独设置强度会自动开启思考。
-- 若 `extra_body` 中已包含 `thinking` 键，则该键优先，旧的底层配置保持完全向后兼容。
-
-示例：
-
-```python
-llm_cfg = LLMConfig(
-    api_key="your-api-key",
-    thinking_mode=True,
-    thinking_strength="high",
+    llm_cfg=LLMConfig(api_key_env="DEEPSEEK_API_KEY"),
+    continuous_cfg=ContinuousLearningConfig(
+        output_dir=Path("./mhl_out_continual"),
+        drift=DriftConfig(
+            dropped_cols=("wbc",),
+            added_cols=("new_marker",),
+            renamed_cols=(("old_name", "new_name"),),
+            change_note="临床表结构发生更新。",
+            prev_hl_out_dir=Path("./mhl_out"),
+        ),
+    ),
 )
 ```
 
-### `RunConfig`
+完整可运行示例：[example_continuous_learning.py](./example_continuous_learning.py)。
 
-用于配置标准启发式学习流程。
+### 5. 运行产物
 
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `output_dir` | `Path \| None` | `None` | 为 `None` 时输出到 `./out/<时间戳>/`。 |
-| `iterations` | `int` | `10` | 最大迭代轮数。 |
-| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC", "Sensitivity", "Specificity")` | 最终版本选择与 prompt 指导所使用的指标优先级。 |
-| `train_baselines` | `bool` | `False` | 预留字段；主编排器当前未使用。 |
-| `run_univariate_probe` | `bool` | `True` | 是否计算单变量探针。 |
-| `run_knowledge_probe` | `bool` | `True` | 是否调用 LLM 知识探针。 |
-| `run_v0_generation` | `bool` | `True` | 若规则文件不存在，是否生成 `predict_v0`。 |
-| `run_iterations` | `bool` | `True` | 是否执行规则迭代优化。 |
-| `max_error_samples` | `int` | `100` | 每轮最多采样的训练错误样本数。 |
-| `max_error_details` | `int` | `40` | prompt 中最多展开的详细错误样本数。 |
-| `degradation_threshold` | `int` | `10` | 预留字段；当前未直接生效。 |
-| `degradation_rate` | `float` | `0.05` | 预留字段；当前未直接生效。 |
-| `degradation_max_examples` | `int` | `30` | 进入下一轮上下文的退化样本上限。 |
-| `max_llm_attempts` | `int` | `4` | 解析或校验失败时的最大重试次数。 |
-| `task_description` | `str` | `""` | 注入 prompt 的任务描述。 |
-| `enable_auto_patch` | `bool` | `False` | 面向未来 patch 流程的预留字段。 |
-| `max_specificity_drop` | `float` | `1.0` | 预留字段。 |
-| `max_acc_drop` | `float` | `1.0` | 预留字段。 |
-| `univariate_top_k` | `int` | `30` | 进入 prompt 的单变量摘要 top-k 条数。 |
-| `knowledge_top_k` | `int` | `20` | 预留字段；当前未直接生效。 |
-| `random_seed` | `int` | `42` | 错误样本与退化样本采样种子。 |
-| `llm_enabled` | `bool` | `True` | 是否初始化 LLM client 并执行依赖 LLM 的步骤。 |
+标准流程默认写入 `./out/<时间戳>/`；持续学习默认写入 `./out/<时间戳>_continuous_learning/`。
 
-### `run_heuristic_learning`
+| 产物 | 说明 |
+| --- | --- |
+| `probe_univariate_results.csv` | 统计探针结果与特征排序。 |
+| `probe_knowledge.md` | 医学知识探针生成的结构化知识表。 |
+| `heuristic_system.py` | `predict_v0`、`predict_v1` 等全部版本化规则。 |
+| `evolution_results.txt` | 各版本在验证集上的指标轨迹。 |
+| `iteration_log.json` | 每轮提案、校验、接受状态与退化样本记录。 |
+| `final_heuristic_model.py` | 最佳规则版本及稳定的 `predict(...)` 入口。 |
+| `final_comparison.txt` | 初始版本、最佳版本与最后版本的指标对比。 |
 
-```python
-def run_heuristic_learning(
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    label_col: str,
-    run_cfg: RunConfig,
-    llm_cfg: LLMConfig,
-) -> RunResult:
+持续学习还会生成 `continuous_learning_context.json`、`probe_univariate_results_prev.csv` 和 `probe_knowledge_prev.md`，用于记录漂移上下文与上一阶段探针快照。
+
+## API 文档
+
+- [中文 API 文档](./docs/API-CN.md)：按照当前 `src/hl` 代码整理的公共入口、配置字段、返回类型、异常与产物契约。
+- 英文 API 文档将在中文版确认后，与英文 README 一并生成。
+
+## 流程设计
+
+![MHL 标准流程与持续学习流程](./supporting_files/fig1.jpg)
+
+标准 MHL 由四个步骤组成：
+
+1. **统计探针**：从训练集提取描述性统计、缺失率和单变量关联，为规则生成提供低假设的经验依据。
+2. **医学知识探针**：结合特征与任务语义，由 LLM 归纳临床解释、候选阈值和证据置信度。
+3. **初始规则生成**：融合双探针结果、任务描述和指标优先级，生成经过结构、语法和函数名校验的 `predict_v0`。
+4. **规则迭代**：执行当前规则，分析错误与版本退化，要求 LLM 进行小步修订；候选规则通过校验和评估后才进入版本历史，最终按指标优先级导出最佳版本。
+
+**持续学习**沿用相同的四步闭环，但以先前验证过的探针结果和最终规则作为显式先验。特征空间变化后，系统过滤已删除特征、处理重命名特征、为新增特征补充证据，并生成漂移感知的新 `v0`，随后继续迭代。整个适应过程表现为可见的代码修订，而不是对隐藏参数的覆盖。
+
+## 实验发现
+
+论文及仓库实验围绕样本规模、类别比例、探针消融、LLM 后端和特征演化展开。主要观察如下：
+
+- **总体性能**：MHL 在多个医学表格数据集上取得了与代表性强基线相当的预测性能，同时保留了完整、可执行的决策逻辑。
+- **小样本鲁棒性**：在标注样本有限时，医学先验和显式规则结构减少了对大规模参数估计的依赖，使 MHL 保持有竞争力的表现。
+- **类别不平衡适应性**：在极端正负比例下，常规模型容易出现近单类别预测；MHL 可借助指标优先级、错误分析和退化反馈显式调整敏感度与特异度之间的权衡。
+- **探针互补性**：统计证据与医学知识分别约束数据相关性和临床合理性；消融结果支持二者联合使用，以获得更稳定的规则生成与迭代过程。
+- **持续学习能力**：在特征演化与少量新阶段数据下，继承并修订旧规则有助于保留已验证知识，并缓解从头训练或不透明参数覆盖带来的遗忘。
+- **跨后端可迁移性**：不同 LLM 后端均可接入同一受约束工作流；最终部署对象仍是确定性的纯 Python 规则，而不是 LLM 本身。
+
+详见 [arXiv 论文](https://arxiv.org/abs/2606.16337)、[训练规模实验](./experiment/contrast1/README.md)、[类别不平衡实验](./experiment/contrast2/README.md)、[消融实验](./experiment/ablation/README.md)、[LLM 后端实验](./experiment/contrast0/README.md) 与 [持续学习实验](./experiment/continuous_learning/README.md)。
+
+## 仓库结构
+
+```text
+medical-heuristic-learning/
+├── src/hl/
+│   ├── agent/                  # OpenAI 兼容客户端与提示模板
+│   ├── continuous_learning/    # 特征演化下的持续学习流程
+│   ├── evolution/              # 错误分析、退化检测与规则校验
+│   ├── orchestrator/           # 标准 MHL 四阶段编排
+│   ├── probes/                 # 统计探针与医学知识探针
+│   ├── config.py               # LLMConfig 与 RunConfig
+│   ├── metrics.py              # 分类指标
+│   ├── model.py                # 单行与批量模型加载
+│   └── result.py               # 运行产物路径类型
+├── docs/                       # API 文档
+├── tests/                      # pytest 测试套件
+├── experiment/                 # 对比、消融与持续学习实验
+├── supporting_files/           # README 题图与流程图
+├── example_training.py         # 训练示例
+├── example_inference.py        # 模型重载与推理示例
+├── example_continuous_learning.py
+├── pyproject.toml
+└── README-CN.md
 ```
 
-行为概述：
+## TODO
 
-- 校验标签列与特征集合一致性；
-- 解析输出目录；
-- 顺序执行单变量探针、知识探针、`v0` 生成与迭代优化；
-- 写出各类中间文件与日志；
-- 按 `metric_priority` 选择最佳版本并导出 `final_heuristic_model.py`。
-
-### `RunResult`
-
-标准流程与持续学习流程共用的返回对象。
-
-```python
-from hl.result import RunResult
-```
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `out_dir` | `Path` | 本次运行的输出目录。 |
-| `heuristic_path` | `Path` | 版本化 `heuristic_system.py` 的路径。 |
-| `final_model_path` | `Path` | 导出的最终模型路径。 |
-
-### `load_model`
-
-`load_model(...)` 从可信的 MHL 导出模型文件中加载可调用的 `predict(features)` 入口。
-
-```python
-from hl import load_model
-
-predict = load_model(result.final_model_path)
-prediction = predict({"feature_name": 1.0})
-```
-
-### `DriftConfig`
-
-用于描述特征或 schema 漂移。
-
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `dropped_cols` | `tuple[str, ...]` | `()` | 新环境中删除的特征。 |
-| `added_cols` | `tuple[str, ...]` | `()` | 新增或恢复的特征。 |
-| `renamed_cols` | `tuple[tuple[str, str], ...]` | `()` | 特征重命名映射 `(old_name, new_name)`。 |
-| `change_note` | `str` | `""` | 对漂移的自然语言说明。 |
-| `prev_hl_out_dir` | `Path \| None` | `None` | 用于适配的上一轮 HL 输出目录。 |
-
-### `ContinuousLearningConfig`
-
-用于配置漂移感知的持续学习流程。
-
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `drift` | `DriftConfig` | `DriftConfig()` | 漂移配置。 |
-| `output_dir` | `Path \| None` | `None` | 为 `None` 时输出到 `./out/<时间戳>_continuous_learning/`。 |
-| `iterations` | `int` | `10` | 最大迭代轮数。 |
-| `metric_priority` | `tuple[str, ...]` | `("F1", "ACC", "Sensitivity", "Specificity")` | 最终版本选择与 prompt 指导所用指标优先级。 |
-| `run_univariate_probe` | `bool` | `True` | 是否更新单变量探针。 |
-| `run_knowledge_probe` | `bool` | `True` | 是否更新知识探针。 |
-| `run_v0_generation` | `bool` | `True` | 是否生成新的漂移感知 `predict_v0`。 |
-| `run_iterations` | `bool` | `True` | 是否继续执行适配迭代。 |
-| `max_error_samples` | `int` | `100` | 每轮最多采样的训练错误样本数。 |
-| `max_error_details` | `int` | `40` | prompt 中最多展开的详细错误样本数。 |
-| `degradation_max_examples` | `int` | `30` | 保留到 prompt 中的退化样本上限。 |
-| `max_llm_attempts` | `int` | `4` | LLM 输出校验失败时的最大重试次数。 |
-| `task_description` | `str` | `""` | 注入 prompt 的任务描述。 |
-| `univariate_top_k` | `int` | `30` | 更新后单变量摘要进入上下文的 top-k 条数。 |
-| `random_seed` | `int` | `42` | 适配流程采样种子。 |
-| `llm_enabled` | `bool` | `True` | 是否初始化 LLM client。 |
-
-### `ContinuousLearningResult`
-
-`run_continuous_learning(...)` 返回的 `RunResult` 专用子类。
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `out_dir` | `Path` | 本次持续学习运行的输出目录。 |
-| `heuristic_path` | `Path` | 适配后的 `heuristic_system.py` 路径。 |
-| `final_model_path` | `Path` | 导出的最终模型路径。 |
-
-### `run_continuous_learning`
-
-```python
-def run_continuous_learning(
-    *,
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    label_col: str,
-    llm_cfg: LLMConfig,
-    continuous_cfg: ContinuousLearningConfig,
-) -> ContinuousLearningResult:
-```
-
-行为概述：
-
-- 校验新环境下的标签列与特征集合；
-- 写出 `continuous_learning_context.json`；
-- 在漂移条件下更新单变量探针与知识探针；
-- 以旧的最终模型为蓝本生成新的漂移感知 `predict_v0`；
-- 复用同样的迭代优化模式并返回关键路径。
-
-## Probe 行为
-
-### 单变量探针
-
-`hl/probes/univariate.py` 当前实现会：
-
-- 将非二值数值特征视为连续变量；
-- 对连续变量同时计算 point-biserial correlation 与 Mann-Whitney U，并保留更优的 p 值；
-- 对二值/类别特征在适用时计算卡方统计量；
-- 记录缺失率、统计摘要以及类别频数；
-- 最终按 `p_value` 再按 `missing_rate` 排序。
-
-### 知识探针
-
-`hl/probes/knowledge.py` 要求 LLM 返回固定列结构的 Markdown 表：
-
-| Feature | Univariate signal (summary) | Clinical rationale | Suggested threshold | Evidence confidence (high/medium/low) |
-| --- | --- | --- | --- | --- |
-
-## 实验目录
-
-`experiment/` 与可复用的 `hl/` 主干分离。当前子目录包括：
-
-- `experiment/modeling/`
-  十个普通对比模型的统一配置、构造、训练与评估层（`config.py`、`models.py`、
-  `train_eval.py`）；模型层自动类别平衡已关闭，类别比例只在数据构造阶段确定。
-- `experiment/ablation/`
-  探针与流程消融实验。
-- `experiment/contrast0/`
-  不同 LLM 后端的对比实验。
-- `experiment/contrast1/`
-  以训练集规模为重点的对比实验；当前重跑使用十个普通模型、种子 36/40/42，
-  且关闭模型层自动类别平衡。
-- `experiment/contrast2/`
-  以类别比例为重点的对比实验，采用与 contrast1 相同的十模型配置。
-- `experiment/continuous_learning/`
-  重构后的 v2 三分支持续学习实验：`stage1_direct_train1000`、
-  `stage2_continual_from_stage1_train40`、`stage2_direct_train40`，种子
-  36/40/42。在 SIRS → SOFA 特征漂移下比较 HL 与六个 baseline（MLP、XGBoost、
-  LightGBM、EBM、DeepTab FT-Transformer、DeepTab ResNet），各模型使用专属的
-  Stage 1 → Stage 2 迁移策略。HL runner 可分别运行 Stage 1、Stage 1 → Stage 2
-  持续适配和 Stage 2 直接训练。早期的门控 A→B 超参搜索运行器已移除，其审计记录
-  归档在 `experiment/outputs_rerun/`。
-- `experiment/outputs_rerun/`
-  重跑实验的模型产物、预测、指标与运行 manifest 归档。
-- `experiment/RERUN_TRAINING_REPORT.md`
-  对比实验重跑的实施与训练进度报告。
-- `experiment/EXPERIMENT_EXTENSION_PLAN.md`
-  contrast1/contrast2 重跑的可复现配置、数据切分契约、命令与输出契约；HL 结果
-  直接复用不重跑。其中持续学习章节早于 v2 重构，仅作历史参考。
-
-每个实验子目录都提供自己的 README，说明数据要求与运行命令。
-
-## 说明
-
-- 如果需要稳定可复现的输出路径，请显式传入 `output_dir`。
-- 当 `llm_enabled=False` 时，依赖 LLM 的步骤只能复用磁盘上已有产物，不能凭空生成新规则。
-- 当 `run_univariate_probe=False` 或 `run_knowledge_probe=False` 时，流程会优先尝试复用输出目录中的缓存文件。
-- 持续学习会把上一轮 probe 快照保存在 `probe_univariate_results_prev.csv` 与 `probe_knowledge_prev.md` 中。
+- [ ] 提供兼容 scikit-learn 的 Estimator 接口，包括 `fit`、`predict`、`get_params` 与 `set_params`。
