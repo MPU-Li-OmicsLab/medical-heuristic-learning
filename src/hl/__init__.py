@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version as distribution_version
+
 from hl.config import LLMConfig, RunConfig
 from hl.continuous_learning import (
     ContinuousLearningConfig,
@@ -9,6 +11,12 @@ from hl.continuous_learning import (
 )
 from hl.model import BatchPredictFunction, PredictFunction, load_batch_model, load_model
 from hl.orchestrator import run_heuristic_learning
+
+
+try:
+    __version__ = distribution_version("medical-heuristic-learning")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
 
 
 __all__ = [
