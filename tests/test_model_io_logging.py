@@ -4,9 +4,11 @@ import json
 import logging
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from hl.model import load_model
+import hl.model as model_module
+from hl.model import load_batch_model, load_model
 from hl.utils.io import append_text, ensure_dir, write_json, write_text
 from hl.utils.progress import log_progress
 
@@ -23,6 +25,68 @@ def test_load_model_returns_exported_predict_function(tmp_path: Path) -> None:
 
     assert predict({"score": 2.0}) == 1
     assert predict({"score": -2.0}) == 0
+
+
+def test_load_batch_model_predicts_feature_rows_in_input_order(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.py"
+    model_path.write_text(
+        "def predict(features: dict) -> int:\n"
+        "    return int(float(features.get('score', 0.0)) >= 0.0)\n",
+        encoding="utf-8",
+    )
+    data = pd.DataFrame(
+        {"score": [2.0, -2.0, 0.0]},
+        index=[10, 20, 30],
+    )
+
+    predict_batch = load_batch_model(model_path)
+
+    assert predict_batch(data) == [1, 0, 1]
+    assert list(data.columns) == ["score"]
+
+
+def test_load_batch_model_accepts_feature_only_and_empty_dataframes(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.py"
+    model_path.write_text(
+        "def predict(features: dict) -> int:\n"
+        "    return int(float(features.get('score', 0.0)) >= 0.0)\n",
+        encoding="utf-8",
+    )
+    predict_batch = load_batch_model(model_path)
+
+    assert predict_batch(pd.DataFrame({"score": [-1.0, 1.0]})) == [0, 1]
+    assert predict_batch(pd.DataFrame(columns=["score"])) == []
+
+
+def test_load_batch_model_loads_artifact_only_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    load_count = 0
+
+    def fake_load_model(_: str | Path):
+        nonlocal load_count
+        load_count += 1
+        return lambda features: int(float(features["score"]) >= 0.0)
+
+    monkeypatch.setattr(model_module, "load_model", fake_load_model)
+    predict_batch = load_batch_model("model.py")
+    data = pd.DataFrame({"score": [-1.0, 1.0]})
+
+    assert load_count == 1
+    assert predict_batch(data) == [0, 1]
+    assert predict_batch(data) == [0, 1]
+    assert load_count == 1
+
+
+def test_load_batch_model_validates_dataframe_shape(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.py"
+    model_path.write_text("def predict(features: dict) -> int:\n    return 0\n", encoding="utf-8")
+    predict_batch = load_batch_model(model_path)
+
+    with pytest.raises(TypeError, match="pandas DataFrame"):
+        predict_batch([{"score": 1.0}])  # type: ignore[arg-type]
+
+    duplicate_columns = pd.DataFrame([[1.0, 2.0]], columns=["score", "score"])
+    with pytest.raises(ValueError, match="unique column names"):
+        predict_batch(duplicate_columns)
 
 
 def test_load_model_rejects_missing_file(tmp_path: Path) -> None:
