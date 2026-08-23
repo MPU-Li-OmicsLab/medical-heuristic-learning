@@ -2,13 +2,14 @@
 
 # Medical Heuristic Learning（MHL）
 
-[![PyPI Version](https://img.shields.io/pypi/v/medical-heuristic-learning?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/medical-heuristic-learning/)
+[![PyPI Version](https://img.shields.io/pypi/v/medical-heuristic-learning?style=for-the-badge&logo=pypi&logoColor=white&cacheSeconds=300)](https://pypi.org/project/medical-heuristic-learning/)
 [![PyPI Python Version](https://img.shields.io/pypi/pyversions/medical-heuristic-learning?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/medical-heuristic-learning/)
 [![CI](https://img.shields.io/github/actions/workflow/status/MPU-Li-OmicsLab/medical-heuristic-learning/ci.yml?branch=master&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/MPU-Li-OmicsLab/medical-heuristic-learning/actions/workflows/ci.yml)
 [![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.16337-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2606.16337)
 [![Apache-2.0 License](https://img.shields.io/badge/License-Apache--2.0-green?style=for-the-badge)](./LICENSE)
 [![LI-OMICSLAB](https://img.shields.io/badge/LI--OMICSLAB-00795E?style=for-the-badge)](https://liomicslab.cn/)
+[![MPU](./supporting_files/mpu-badge.svg)](https://www.mpu.edu.mo/)
 
 **医学启发式学习（Medical Heuristic Learning, MHL）是一种将大语言模型用作白盒规则生成器的医学表格数据预测范式，尤其适用于小样本、严重类别不平衡以及对模型可解释性和可审计性要求较高的场景。**
 
@@ -257,3 +258,7 @@ medical-heuristic-learning/
 ## TODO
 
 - [ ] 提供兼容 scikit-learn 的 Estimator 接口，包括 `fit`、`predict`、`get_params` 与 `set_params`。
+
+## 联系我们
+
+[xuwei_chn@foxmail.com](mailto:xuwei_chn@foxmail.com)。
