@@ -20,9 +20,18 @@ concurrency:
 
 jobs:
   tests:
-    name: Python 3.11 tests
+    name: Python ${{ matrix.python-version }} tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
 
     steps:
       - name: Check out repository
@@ -33,11 +42,12 @@ jobs:
       - name: Install uv and select Python
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          version: "0.8.10"
-          python-version: "3.11"
+          version: "0.12.5"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
+          cache-suffix: py${{ matrix.python-version }}
           prune-cache: true
 
       - name: Install test dependencies
