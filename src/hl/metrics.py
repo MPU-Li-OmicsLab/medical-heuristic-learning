@@ -48,7 +48,7 @@ def generate_metric_description(metric_priority: list[str] | tuple[str, ...]) ->
     if len(metrics) == 2:
         return f"This optimization prioritizes {metrics[0]} first, then {metrics[1]}."
     return (
-        f"This optimization prioritizes {metrics[0]} first, then {metrics[1]}. "
-        f"Finally, it considers {metrics[2]} and {metrics[3]}. "
+        "This optimization prioritizes metrics in this order: "
+        f"{', '.join(metrics)}. "
         "Focus on balancing false negatives and false positives."
     )
