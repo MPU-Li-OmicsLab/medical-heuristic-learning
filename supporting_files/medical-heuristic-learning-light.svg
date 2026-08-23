@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">Medical Heuristic Learning — light logo</title>
+  <desc id="desc">Vector logo with an open medical cross, a four-by-three data grid, decision-rule branches, monospaced English lettering, and the Chinese name 医学启发式学习.</desc>
+  <metadata>
+    Base green: RGB(0,121,94). Reference process color: CMYK(86,43,73,3).
+    Native SVG only: no embedded raster images. English ligatures are disabled and a monospaced font stack is used.
+  </metadata>
+
+  <defs>
+    <linearGradient id="brand" x1="145" y1="160" x2="555" y2="565" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#79E7C0"/>
+      <stop offset="0.33" stop-color="#00B88A"/>
+      <stop offset="0.66" stop-color="#00795E"/>
+      <stop offset="1" stop-color="#58DDB0"/>
+    </linearGradient>
+    <linearGradient id="node" x1="340" y1="310" x2="560" y2="455" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9BF1D3"/>
+      <stop offset="1" stop-color="#6BDDB8"/>
+    </linearGradient>
+    <linearGradient id="initial" x1="716" y1="210" x2="790" y2="510" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#004F42"/>
+      <stop offset="0.5" stop-color="#00795E"/>
+      <stop offset="1" stop-color="#20BB8B"/>
+    </linearGradient>
+    <radialGradient id="soft-halo" cx="0" cy="0" r="1" gradientTransform="translate(358 365) rotate(90) scale(272)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BDEEDF" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#BDEEDF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="11" stdDeviation="14" flood-color="#006A52" flood-opacity="0.13"/>
+    </filter>
+  </defs>
+
+  <g id="background">
+    <rect width="1600" height="720" fill="#FFFFFF"/>
+    <ellipse cx="360" cy="368" rx="294" ry="286" fill="url(#soft-halo)"/>
+  </g>
+
+  <g id="symbol" filter="url(#soft-shadow)">
+    <!-- Open cross: the clinical-care silhouette from the original concept -->
+    <g fill="none" stroke="url(#brand)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M160 365V310Q160 289 181 289H288V182Q288 161 309 161H430V274L350 358"/>
+      <path d="M350 372L430 452V559H309Q288 559 288 538V466"/>
+    </g>
+
+    <!-- Four-by-three tabular-data field -->
+    <g fill="url(#brand)">
+      <rect x="180" y="344" width="22" height="22" rx="3" opacity="0.98"/>
+      <rect x="218" y="344" width="22" height="22" rx="3" opacity="0.66"/>
+      <rect x="256" y="344" width="22" height="22" rx="3" opacity="0.54"/>
+      <rect x="294" y="344" width="22" height="22" rx="3" opacity="0.40"/>
+      <rect x="180" y="382" width="22" height="22" rx="3" opacity="0.82"/>
+      <rect x="218" y="382" width="22" height="22" rx="3" opacity="0.96"/>
+      <rect x="256" y="382" width="22" height="22" rx="3" opacity="0.71"/>
+      <rect x="294" y="382" width="22" height="22" rx="3" opacity="0.64"/>
+      <rect x="180" y="420" width="22" height="22" rx="3" opacity="0.98"/>
+      <rect x="218" y="420" width="22" height="22" rx="3" opacity="0.77"/>
+      <rect x="256" y="420" width="22" height="22" rx="3" opacity="0.91"/>
+      <rect x="294" y="420" width="22" height="22" rx="3" opacity="0.98"/>
+    </g>
+
+    <!-- Four deterministic rule outcomes -->
+    <g fill="none" stroke="url(#brand)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M430 256H511"/>
+      <path d="M350 365H427L459 333H520"/>
+      <path d="M350 365H427L459 397H531"/>
+      <path d="M430 461H511"/>
+    </g>
+    <g fill="url(#node)">
+      <circle cx="350" cy="365" r="19"/>
+      <circle cx="531" cy="256" r="18"/>
+      <circle cx="540" cy="333" r="18"/>
+      <circle cx="551" cy="397" r="18"/>
+      <circle cx="531" cy="461" r="18"/>
+    </g>
+  </g>
+
+  <g id="wordmark" font-family="Consolas,'Cascadia Mono','SFMono-Regular','Liberation Mono','Courier New',monospace" font-variant-ligatures="none" font-feature-settings="'liga' 0, 'calt' 0" text-rendering="geometricPrecision">
+    <text x="708" y="289" fill="#121A1D" font-size="84" font-weight="600" letter-spacing="2"><tspan fill="url(#initial)" font-weight="700">M</tspan>edical</text>
+    <text x="708" y="395" fill="#121A1D" font-size="84" font-weight="600" letter-spacing="2"><tspan fill="url(#initial)" font-weight="700">H</tspan>euristic</text>
+    <text x="708" y="501" fill="#121A1D" font-size="84" font-weight="600" letter-spacing="2"><tspan fill="url(#initial)" font-weight="700">L</tspan>earning</text>
+  </g>
+
+  <text id="chinese-name" x="708" y="575" fill="#00795E" font-family="'Noto Sans CJK SC','Source Han Sans SC','Microsoft YaHei',sans-serif" font-size="35" font-weight="500" letter-spacing="15">医学启发式学习</text>
+</svg>
