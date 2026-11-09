@@ -106,6 +106,15 @@ def test_standard_pipeline_runs_all_stages_with_synthetic_data_and_fake_llm(
     assert len(fake.json_calls) == 4
     assert "Synthetic risk classification" in prompt_text(fake.text_calls)
     assert "predict_v0" in prompt_text(fake.json_calls, 2)
+    # The iteration must receive the same probe evidence used to design v0,
+    # including on retries, rather than only the sampled training errors.
+    initial_prompt = prompt_text(fake.json_calls)
+    references = initial_prompt.split("[Univariate Summary]\n", 1)[1].split("[Evidence Use]", 1)[0]
+    assert "risk_score" in references and "pointbiserial" in references
+    assert make_knowledge_table(["risk_score", "age", "ward", "binary_marker"]) in references
+    for call_index in (2, 3):
+        iteration_prompt = prompt_text(fake.json_calls, call_index)
+        assert "[Univariate Summary]\n" + references in iteration_prompt
     comparison = (out_dir / "final_comparison.txt").read_text(encoding="utf-8")
     assert "V0=" in comparison
     assert "FINAL(v1)=" in comparison

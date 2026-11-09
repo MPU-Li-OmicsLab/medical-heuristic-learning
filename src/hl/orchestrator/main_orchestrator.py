@@ -134,6 +134,8 @@ def run_heuristic_learning(
         evolution_results_path=evolution_results_path,
         metric_desc=metric_desc,
         report_features=report_features,
+        univariate_summary=univariate_summary,
+        knowledge_table=knowledge_table,
     )
     log_progress("HL", "Step 4/4 completed.")
 

@@ -79,6 +79,8 @@ def run_iterations_task(
     evolution_results_path: Path,
     metric_desc: str,
     report_features: list[str],
+    univariate_summary: str = "",
+    knowledge_table: str = "",
 ) -> tuple[list[IterationRecord], list[dict]]:
     log_progress("HL-ITER", f"Loading heuristic module from {heuristic_path}.")
     ns = _load_heuristic_module(heuristic_path)
@@ -143,6 +145,8 @@ def run_iterations_task(
             metric_desc=metric_desc,
             task_description=run_cfg.task_description,
             next_version=next_version,
+            univariate_summary=univariate_summary,
+            knowledge_table=knowledge_table,
         )
 
         accepted = False
