@@ -214,6 +214,7 @@ result = run_continuous_learning(
 | [`experiment/contrast0/`](./experiment/contrast0/README.md) | LLM 后端对比实验 | 在相同数据划分和 MHL 流程下，对比不同 LLM 及推理强度生成白盒规则的效果。 |
 | [`experiment/contrast1/`](./experiment/contrast1/README.md) | 训练集规模实验 | 在平衡训练集上改变样本量，比较 MHL 与机器学习、深度学习及可解释模型的小样本表现。 |
 | [`experiment/contrast2/`](./experiment/contrast2/README.md) | 类别不平衡实验 | 固定训练总量并改变正负样本比例，评估各方法在极端类别失衡下的敏感度与特异度。 |
+| [`experiment/valratio/`](./experiment/valratio/README.md) | 验证集类别比例扫描实验 | 训练一次 MHL 后，在 1:1、1:2、2:1、1:4、4:1、1:8、8:1 七种验证集类别比例下记录 ACC、F1、灵敏度、特异度与混淆矩阵计数。 |
 | [`experiment/ablation/`](./experiment/ablation/README.md) | 探针消融实验 | 组合启用或关闭统计探针与医学知识探针，分析两类信息对规则生成和迭代的贡献。 |
 | [`experiment/continuous_learning/`](./experiment/continuous_learning/README.md) | 持续学习实验 | 在 SIRS 被移除、SOFA 被加入且第二阶段样本有限的条件下，比较继承既有状态与从头训练。 |
 
